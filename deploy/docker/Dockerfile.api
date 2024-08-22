@@ -1,0 +1,62 @@
+# Use an official Golang runtime as a parent image
+FROM golang:1.21.3-alpine3.18 AS builder
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy go.mod and go.sum files
+COPY go.mod go.sum ./
+
+# Download and install any required dependencies
+RUN go mod download
+
+# Copy the rest of the application code
+COPY . .
+
+# Build the API binary with optimizations and version information
+ARG VERSION
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s -X main.Version=${VERSION}" -o main ./cmd/api
+
+# Use a smaller base image for the final stage
+FROM alpine:3.18
+
+WORKDIR /app
+
+# Copy the binary from the build stage
+COPY --from=builder /app/main .
+
+# Install necessary system dependencies
+RUN apk add --no-cache ca-certificates tzdata curl
+
+# Create a non-root user and set permissions
+RUN adduser -D -g '' appuser && \
+    chown -R appuser:appuser /app
+
+# Use the non-root user
+USER appuser
+
+# Expose port 8080 to the outside world
+EXPOSE 8080
+
+# Set environment variables
+ENV APP_ENV=production \
+    PORT=8080 \
+    DB_HOST=${DB_HOST:-localhost} \
+    DB_PORT=${DB_PORT:-5432} \
+    DB_NAME=${DB_NAME:-devlm_db} \
+    DB_USER=${DB_USER:-devlm_user} \
+    DB_PASSWORD=${DB_PASSWORD:-changeme} \
+    REDIS_HOST=${REDIS_HOST:-localhost} \
+    REDIS_PORT=${REDIS_PORT:-6379} \
+    LOG_LEVEL=info \
+    GOMAXPROCS=2
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Command to run the executable with graceful shutdown
+CMD ["sh", "-c", "trap 'kill -TERM $PID' TERM INT; ./main & PID=$!; wait $PID"]
+
+# Note: Ensure that the /health endpoint is implemented in the API application
+# Note: Replace placeholder values for DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, REDIS_HOST, and REDIS_PORT at runtime or in your deployment configuration

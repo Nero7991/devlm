@@ -1,0 +1,473 @@
+```yaml
+# Production Configuration for DevLM
+
+database:
+  host: "${PROD_DB_HOST}"
+  port: ${PROD_DB_PORT}
+  name: "${PROD_DB_NAME}"
+  user: "${PROD_DB_USER}"
+  password: "${PROD_DB_PASSWORD}"
+  max_connections: 100
+  connection_timeout: 5
+  idle_timeout: 300
+  ssl_mode: "require"
+  ssl_cert: "/path/to/ssl/cert.pem"
+  use_vault: true
+  vault:
+    address: "https://vault.example.com"
+    role_id: "${VAULT_ROLE_ID}"
+    secret_id: "${VAULT_SECRET_ID}"
+    path: "secret/prod/database"
+  connection_pool:
+    min_idle: 5
+    max_idle: 20
+    max_open: 50
+    max_lifetime: 1800 # 30 minutes
+  retry:
+    max_attempts: 5
+    initial_interval: 1
+    max_interval: 30
+    multiplier: 2
+  read_replica:
+    enabled: true
+    host: "${PROD_DB_READ_REPLICA_HOST}"
+    port: ${PROD_DB_READ_REPLICA_PORT}
+
+redis:
+  host: "${PROD_REDIS_HOST}"
+  port: ${PROD_REDIS_PORT}
+  password: "${PROD_REDIS_PASSWORD}"
+  pool_size: 100
+  min_idle_connections: 10
+  max_retries: 3
+  idle_timeout: 300
+  ssl:
+    enabled: true
+    cert_file: "/path/to/redis/cert.pem"
+    key_file: "/path/to/redis/key.pem"
+    ca_cert_file: "/path/to/redis/ca.pem"
+  sentinel:
+    enabled: true
+    master_name: "mymaster"
+    nodes:
+      - host: "sentinel1.example.com"
+        port: 26379
+      - host: "sentinel2.example.com"
+        port: 26379
+      - host: "sentinel3.example.com"
+        port: 26379
+  cluster:
+    enabled: true
+    nodes:
+      - host: "redis-cluster1.example.com"
+        port: 6379
+      - host: "redis-cluster2.example.com"
+        port: 6379
+      - host: "redis-cluster3.example.com"
+        port: 6379
+
+llm_api:
+  key: "${PROD_LLM_API_KEY}"
+  url: "https://api.example.com/llm"
+  timeout: 30
+  max_retries: 3
+  providers:
+    - name: "claude"
+      priority: 1
+      url: "https://api.anthropic.com/v1"
+      key_rotation:
+        enabled: true
+        interval: 86400  # 24 hours
+        vault_path: "secret/prod/llm/claude"
+    - name: "gpt4"
+      priority: 2
+      url: "https://api.openai.com/v1"
+      key_rotation:
+        enabled: true
+        interval: 86400  # 24 hours
+        vault_path: "secret/prod/llm/gpt4"
+  load_balancing:
+    strategy: "least_connections"
+    health_check_interval: 60
+  rate_limiting:
+    requests_per_minute: 1000
+    burst: 100
+  fallback_strategy: "next_provider"
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 5
+    success_threshold: 3
+    timeout: 30
+
+search_api:
+  key: "${PROD_SEARCH_API_KEY}"
+  url: "https://api.example.com/search"
+  providers:
+    - name: "google"
+      priority: 1
+      url: "https://www.googleapis.com/customsearch/v1"
+      engine_id: "${GOOGLE_CUSTOM_SEARCH_ENGINE_ID}"
+    - name: "bing"
+      priority: 2
+      url: "https://api.bing.microsoft.com/v7.0/search"
+  timeout: 10
+  max_results: 20
+  cache:
+    enabled: true
+    ttl: 3600  # 1 hour
+    max_size: 1000  # entries
+  fallback_strategy: "next_provider"
+  result_filtering:
+    enabled: true
+    blacklist:
+      - "example.com"
+      - "spam-site.com"
+    content_filter: "moderate"
+
+code_execution:
+  sandbox_image: "prod-sandbox:latest"
+  max_execution_time: 30
+  max_memory: 512
+  cpu_limit: "1"
+  network_access: false
+  allowed_syscalls:
+    - "read"
+    - "write"
+    - "exit"
+  resource_monitoring:
+    enabled: true
+    interval: 1  # seconds
+    alert_threshold:
+      cpu: 90  # percent
+      memory: 80  # percent
+  custom_images:
+    - name: "python"
+      image: "python:3.9-slim"
+    - name: "nodejs"
+      image: "node:14-alpine"
+    - name: "go"
+      image: "golang:1.16-alpine"
+    - name: "java"
+      image: "openjdk:11-jre-slim"
+  output_streaming:
+    enabled: true
+    chunk_size: 1024  # bytes
+
+api_gateway:
+  port: 8080
+  secret_key: "${PROD_API_SECRET_KEY}"
+  rate_limit:
+    requests_per_minute: 100
+    burst: 50
+  timeout: 60
+  cors:
+    allowed_origins:
+      - "https://devlm.example.com"
+    allowed_methods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+  request_validation:
+    enabled: true
+    schema_path: "/path/to/api_schema.json"
+  versioning:
+    enabled: true
+    current_version: "v1"
+    supported_versions:
+      - "v1"
+      - "v2"
+  documentation:
+    enabled: true
+    path: "/docs"
+    swagger_ui: true
+  deprecation:
+    enabled: true
+    notification_period: 90  # days
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 5
+    success_threshold: 3
+    timeout: 30
+
+logging:
+  level: "info"
+  file_path: "/var/log/devlm/production.log"
+  rotation:
+    max_size: 100
+    max_backups: 5
+    max_age: 30
+  format: "json"
+  output:
+    - "file"
+    - "stdout"
+  aggregation:
+    enabled: true
+    service: "elk"
+    elk:
+      host: "elk.example.com"
+      port: 9200
+      index: "devlm-logs"
+  tracing:
+    enabled: true
+    provider: "jaeger"
+    jaeger:
+      agent_host: "jaeger-agent.example.com"
+      agent_port: 6831
+  anonymization:
+    enabled: true
+    fields:
+      - "user.email"
+      - "user.ip_address"
+  structured_logging:
+    enabled: true
+    additional_fields:
+      - "request_id"
+      - "user_id"
+      - "session_id"
+
+file_system:
+  project_root: "/opt/devlm/projects"
+  temp_directory: "/tmp/devlm"
+  max_file_size: 10485760  # 10MB
+  allowed_extensions:
+    - ".py"
+    - ".js"
+    - ".go"
+    - ".java"
+  integrity_check:
+    enabled: true
+    interval: 3600  # 1 hour
+  cleanup:
+    enabled: true
+    interval: 86400  # 24 hours
+    max_age: 604800  # 7 days
+  versioning:
+    enabled: true
+    max_versions: 5
+  encryption:
+    enabled: true
+    algorithm: "AES-256-GCM"
+    key_storage:
+      provider: "aws_kms"
+      key_id: "${AWS_KMS_KEY_ID}"
+
+security:
+  allowed_origins:
+    - "https://devlm.example.com"
+  ssl:
+    cert_file: "/etc/ssl/certs/devlm.crt"
+    key_file: "/etc/ssl/private/devlm.key"
+    auto_renewal:
+      enabled: true
+      provider: "letsencrypt"
+      email: "admin@devlm.example.com"
+  jwt:
+    secret: "${PROD_JWT_SECRET}"
+    expiration: 3600
+  ip_whitelist:
+    enabled: true
+    allowed_ips:
+      - "192.168.1.0/24"
+      - "10.0.0.0/8"
+  rate_limiting:
+    per_user:
+      enabled: true
+      requests_per_minute: 50
+      burst: 20
+  two_factor_auth:
+    enabled: true
+    provider: "google_authenticator"
+  brute_force_protection:
+    enabled: true
+    max_attempts: 5
+    lockout_duration: 900  # 15 minutes
+  content_security_policy:
+    enabled: true
+    directives:
+      default-src: "'self'"
+      script-src: "'self' 'unsafe-inline'"
+      style-src: "'self' 'unsafe-inline'"
+      img-src: "'self' data: https:"
+
+performance:
+  max_concurrent_tasks: 50
+  cache_ttl: 3600
+  database_connection_pool: 50
+  worker_processes: 4
+  adaptive_concurrency:
+    enabled: true
+    min_workers: 2
+    max_workers: 8
+    cpu_threshold: 80  # percent
+  thread_pool:
+    min_size: 10
+    max_size: 100
+  connection_draining:
+    enabled: true
+    timeout: 300  # seconds
+  request_timeout: 30  # seconds
+  compression:
+    enabled: true
+    level: 6
+    min_length: 1024  # bytes
+
+feature_flags:
+  enable_web_search: true
+  enable_code_execution: true
+  enable_file_operations: true
+  enable_advanced_analytics: false
+  management:
+    provider: "launchdarkly"
+    sdk_key: "${LAUNCHDARKLY_SDK_KEY}"
+    polling_interval: 60  # seconds
+  rollout_strategy:
+    default: "gradual"
+    gradual_percentage: 10
+  custom_rules:
+    - name: "beta_features"
+      condition: "user.group == 'beta_testers'"
+      enabled_features:
+        - "advanced_analytics"
+        - "experimental_code_execution"
+
+monitoring:
+  prometheus_port: 9090
+  metrics_endpoint: "/metrics"
+  health_check_endpoint: "/health"
+  custom_metrics:
+    - name: "code_execution_duration"
+      type: "histogram"
+      description: "Duration of code execution tasks"
+    - name: "llm_api_latency"
+      type: "gauge"
+      description: "Latency of LLM API requests"
+  alerting:
+    provider: "pagerduty"
+    service_key: "${PAGERDUTY_SERVICE_KEY}"
+    rules:
+      - name: "high_error_rate"
+        condition: "error_rate > 0.05"
+        duration: "5m"
+        severity: "critical"
+      - name: "high_api_latency"
+        condition: "llm_api_latency > 2000"
+        duration: "10m"
+        severity: "warning"
+  dashboard:
+    enabled: true
+    url: "https://grafana.example.com/devlm"
+  anomaly_detection:
+    enabled: true
+    algorithm: "isolation_forest"
+    sensitivity: 0.95
+  tracing:
+    enabled: true
+    sampling_rate: 0.1
+
+llm_instances:
+  - name: "prod-llm-1"
+    model: "claude-v2"
+    max_tokens: 8000
+    temperature: 0.7
+  - name: "prod-llm-2"
+    model: "claude-v2"
+    max_tokens: 8000
+    temperature: 0.7
+  - name: "prod-llm-3"
+    model: "claude-v2"
+    max_tokens: 8000
+    temperature: 0.7
+  auto_scaling:
+    enabled: true
+    min_instances: 2
+    max_instances: 10
+    cpu_threshold: 70  # percent
+    scale_up_cooldown: 300  # seconds
+    scale_down_cooldown: 600  # seconds
+  health_check:
+    enabled: true
+    interval: 60  # seconds
+    timeout: 10  # seconds
+    unhealthy_threshold: 3
+    healthy_threshold: 2
+  load_balancing:
+    strategy: "round_robin"
+    sticky_sessions:
+      enabled: true
+      cookie_name: "llm_instance_id"
+  warm_up:
+    enabled: true
+    strategy: "gradual"
+    initial_requests: 10
+    ramp_up_period: 300  # seconds
+
+backup:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention_period: 30  # days
+  storage:
+    type: "s3"
+    bucket: "devlm-backups"
+    region: "us-west-2"
+  incremental:
+    enabled: true
+    full_backup_interval: 7  # days
+  encryption:
+    enabled: true
+    kms_key_id: "${AWS_KMS_KEY_ID}"
+  verification:
+    enabled: true
+    schedule: "0 4 * * *"  # Daily at 4 AM
+  restore_testing:
+    enabled: true
+    schedule: "0 1 * * 0"  # Weekly on Sunday at 1 AM
+  compression:
+    enabled: true
+    algorithm: "gzip"
+    level: 6
+
+email:
+  smtp_host: "smtp.example.com"
+  smtp_port: 587
+  username: "${PROD_EMAIL_USERNAME}"
+  password: "${PROD_EMAIL_PASSWORD}"
+  from_address: "noreply@devlm.example.com"
+  templates:
+    directory: "/opt/devlm/email_templates"
+  providers:
+    - name: "smtp"
+      priority: 1
+    - name: "sendgrid"
+      priority: 2
+      api_key: "${SENDGRID_API_KEY}"
+  rate_limiting:
+    max_per_minute: 100
+    max_per_hour: 1000
+  verification:
+    enabled: true
+    expiration: 86400  # 24 hours
+  bounce_handling:
+    enabled: true
+    max_bounces: 5
+    cooldown_period: 604800  # 7 days
+
+sentry:
+  dsn: "https://${PROD_SENTRY_DSN}@sentry.example.com/1"
+  environment: "production"
+  release: "1.0.0"
+  error_grouping:
+    custom_fingerprinting:
+      - type: "DatabaseConnectionError"
+        fingerprint: ["database-connection-error", "{{ error.message }}"]
+  filtering:
+    ignore_errors:
+      - "RateLimitExceeded"
+      - "InvalidAPIKey"
+  performance_monitoring:
+    enabled: true
+    sample_rate: 0.1
+  user_feedback:
+    enabled: true
+  breadcrumbs:
+    enabled: true
+    max_breadcrum

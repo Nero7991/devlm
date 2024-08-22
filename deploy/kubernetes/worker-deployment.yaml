@@ -1,0 +1,163 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devlm-worker
+  labels:
+    app: devlm-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: devlm-worker
+  template:
+    metadata:
+      labels:
+        app: devlm-worker
+    spec:
+      containers:
+      - name: devlm-worker
+        image: <REGISTRY_URL>/devlm-worker:<TAG>
+        resources:
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: postgres-host
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: postgres-db
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: postgres-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: postgres-password
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: redis-host
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: redis-password
+        - name: CLAUDE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: claude-api-key
+        - name: API_SERVICE_URL
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: api-service-url
+        - name: LLM_SERVICE_URL
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: llm-service-url
+        - name: SEARCH_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: search-api-key
+        - name: WORKER_CONCURRENCY
+          value: "5"
+        - name: LOG_LEVEL
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: log-level
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: encryption-key
+        - name: SECURE_STORAGE_S3_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: secure-storage-s3-bucket
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp
+      volumes:
+      - name: tmp-volume
+        emptyDir: {}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - devlm-worker
+              topologyKey: "kubernetes.io/hostname"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devlm-worker-service
+spec:
+  selector:
+    app: devlm-worker
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2beta1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: devlm-worker-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: devlm-worker
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      targetAverageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      targetAverageUtilization: 80

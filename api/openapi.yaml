@@ -1,0 +1,519 @@
+openapi: 3.0.0
+info:
+  title: DevLM API
+  version: 1.0.0
+  description: API for the DevLM project, an AI-powered software development assistant
+
+servers:
+  - url: http://localhost:8080/api/v1
+
+paths:
+  /project:
+    post:
+      summary: Create a new project
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      x-codegen-request-body-name: project
+
+  /project/{projectId}:
+    get:
+      summary: Get project details
+      operationId: getProject
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-cache-control: max-age=300, must-revalidate
+
+  /project/{projectId}/requirements:
+    put:
+      summary: Update project requirements
+      operationId: updateRequirements
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequirementsUpdate'
+      responses:
+        '200':
+          description: OK
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /project/{projectId}/analyze:
+    post:
+      summary: Analyze project requirements
+      operationId: analyzeRequirements
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /project/{projectId}/generate:
+    post:
+      summary: Generate code based on project requirements
+      operationId: generateCode
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CodeGenerationRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeneratedCode'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /project/{projectId}/execute:
+    post:
+      summary: Execute generated code
+      operationId: executeCode
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /project/{projectId}/files:
+    get:
+      summary: Get project files
+      operationId: getProjectFiles
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fileType'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectFiles'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /project/{projectId}/files/{fileName}:
+    get:
+      summary: Get file content
+      operationId: getFileContent
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/fileName'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileContent'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      summary: Update file content
+      operationId: updateFileContent
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/fileName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileContentUpdate'
+      responses:
+        '200':
+          description: OK
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '423':
+          $ref: '#/components/responses/Locked'
+
+  /project/{projectId}/search:
+    post:
+      summary: Perform web search for additional information
+      operationId: performWebSearch
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebSearchRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebSearchResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    projectId:
+      name: projectId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    fileName:
+      name: fileName
+      in: path
+      required: true
+      schema:
+        type: string
+    cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    fileType:
+      name: fileType
+      in: query
+      schema:
+        type: string
+        enum: [source, config, documentation, test, other]
+
+  schemas:
+    ProjectCreate:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^[a-zA-Z0-9_-]+$'
+        description:
+          type: string
+          maxLength: 500
+        tags:
+          type: array
+          items:
+            type: string
+            maxLength: 50
+            pattern: '^[a-zA-Z0-9_-]+$'
+          maxItems: 10
+
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        requirements:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    RequirementsUpdate:
+      type: object
+      required:
+        - requirements
+        - version
+      properties:
+        requirements:
+          type: string
+          maxLength: 10000
+        version:
+          type: integer
+          minimum: 1
+
+    AnalysisResult:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            type: string
+        suggestions:
+          type: array
+          items:
+            type: string
+        architectureProposal:
+          type: string
+        complexityScore:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 10
+        estimatedEffort:
+          type: string
+
+    CodeGenerationRequest:
+      type: object
+      properties:
+        language:
+          type: string
+          enum: [python, javascript, go, java, csharp]
+        framework:
+          type: string
+        additionalInstructions:
+          type: string
+
+    GeneratedCode:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              content:
+                type: string
+              language:
+                type: string
+        explanation:
+          type: string
+        dependencies:
+          type: array
+          items:
+            type: string
+
+    ExecutionResult:
+      type: object
+      properties:
+        output:
+          type: string
+        errors:
+          type: array
+          items:
+            type: string
+        executionTime:
+          type: number
+          format: float
+          minimum: 0
+        memoryUsage:
+          type: number
+          format: float
+          minimum: 0
+        cpuUsage:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+
+    ProjectFiles:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              size:
+                type: integer
+                minimum: 0
+              lastModified:
+                type: string
+                format: date-time
+              type:
+                type: string
+                enum: [source, config, documentation, test, other]
+        pagination:
+          type: object
+          properties:
+            nextCursor:
+              type: string
+            hasMore:
+              type: boolean
+
+    FileContent:
+      type: object
+      properties:
+        name:
+          type: string
+        content:
+          type: string
+        lastModified:
+          type: string
+          format: date-time
+        encoding:
+          type: string
+        size:
+          type: integer
+          minimum: 0
+
+    FileContentUpdate:
+      type: object
+      required:
+        - content
+        - version
+      properties:
+        content:
+          type: string
+        encoding:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+
+    WebSearchRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          maxLength: 500
+        maxResults:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+        sources:
+          type: array
+          items:
+            type: string
+          maxItems: 5
+        language:
+          type: string
+          pattern: '^[a-z]{2}(-[A-Z]{2})?$'
+
+    WebSearchResult:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              title:
+                type: string
+              url:
+                type: string
+                format: uri
+              snippet:
+                type: string
+              source:
+                type: string
+              relevanceScore:
+                type: number
+                format: float
+                minimum: 0
+                maximum: 1
+
+  responses:
+    BadRequest:
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Locked:
+      description: Resource Locked
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+        code:
+          type: string
+        details:
+          type: object

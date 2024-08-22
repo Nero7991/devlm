@@ -1,0 +1,176 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devlm-ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://<YOUR_DOMAIN>"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload";
+    nginx.ingress.kubernetes.io/from-to-www-redirect: "true"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    kubernetes.io/ingress.global-static-ip-name: "<YOUR_STATIC_IP_NAME>"
+    appgw.ingress.kubernetes.io/use-private-ip: "false"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      if ($http_user_agent ~* (curl|wget|python-requests)) {
+        return 403;
+      }
+spec:
+  rules:
+  - host: <YOUR_DOMAIN>
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: devlm-api-service
+            port: 
+              number: 80
+      - path: /llm
+        pathType: Prefix
+        backend:
+          service:
+            name: devlm-llm-service
+            port:
+              number: 80
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: devlm-worker-service
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - <YOUR_DOMAIN>
+    secretName: devlm-tls-secret
+
+---
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: nginx
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: k8s.io/ingress-nginx
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devlm-rate-limit
+  annotations:
+    nginx.ingress.kubernetes.io/limit-rps: "10"
+    nginx.ingress.kubernetes.io/limit-rpm: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "5"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      limit_req_status 429;
+      limit_conn_status 429;
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: <YOUR_DOMAIN>
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: devlm-api-service
+            port: 
+              number: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devlm-internal-ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /internal-api
+        pathType: Prefix
+        backend:
+          service:
+            name: devlm-internal-api-service
+            port: 
+              number: 8080
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devlm-metrics-ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: metrics-auth
+    nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+spec:
+  rules:
+  - host: metrics.<YOUR_DOMAIN>
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: devlm-prometheus-service
+            port: 
+              number: 9090
+  tls:
+  - hosts:
+    - metrics.<YOUR_DOMAIN>
+    secretName: metrics-tls-secret
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devlm-webhook-ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  rules:
+  - host: webhook.<YOUR_DOMAIN>
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: devlm-webhook-service
+            port: 
+              number: 8080
+  tls:
+  - hosts:
+    - webhook.<YOUR_DOMAIN>
+    secretName: webhook-tls-secret
+
+# TODO: Replace <YOUR_DOMAIN> with your actual domain name
+# TODO: Replace <YOUR_STATIC_IP_NAME> with your actual static IP name (for GKE)
+# TODO: Create the devlm-tls-secret, metrics-tls-secret, and webhook-tls-secret with your TLS certificates and keys
+# TODO: Create the metrics-auth secret for basic authentication to metrics endpoint
+# TODO: Review and adjust rate limiting, whitelisting, and security headers as needed for your specific requirements

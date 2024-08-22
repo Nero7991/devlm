@@ -1,0 +1,62 @@
+# Use an official Golang runtime as a parent image
+FROM golang:1.21.3-alpine3.18 AS builder
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy the current directory contents into the container
+COPY . .
+
+# Install system dependencies
+RUN apk add --no-cache ca-certificates tzdata git
+
+# Download and install any required dependencies
+RUN go mod download
+
+# Build the worker binary with optimizations and embedded version info
+ARG VERSION
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" -o worker ./cmd/worker
+
+# Run tests with coverage
+RUN go test ./... -v -coverprofile=coverage.out && go tool cover -func=coverage.out
+
+# Start a new stage from scratch
+FROM alpine:3.18
+
+WORKDIR /app
+
+# Copy the binary and necessary files from builder
+COPY --from=builder /app/worker .
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Create a non-root user
+RUN adduser -D -g '' appuser
+USER appuser
+
+# Set environment variables
+ENV APP_ENV=production
+ENV LOG_LEVEL=info
+ENV REDIS_URL=redis://${REDIS_HOST}:${REDIS_PORT}
+ENV POSTGRES_URL=postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
+ENV WORKER_CONCURRENCY=5
+ENV LOG_FORMAT=json
+ENV LOG_OUTPUT=stdout
+
+# Run the worker when the container launches
+CMD ["./worker"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+  CMD ./worker health || exit 1
+
+# Graceful shutdown
+STOPSIGNAL SIGTERM
+
+# Expose metrics port
+EXPOSE 8080
+
+# Label the image
+LABEL maintainer="DevLM Team <devlm@example.com>"
+LABEL version="${VERSION}"
+LABEL description="Worker service for DevLM project"

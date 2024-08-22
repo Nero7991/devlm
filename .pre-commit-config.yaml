@@ -1,0 +1,199 @@
+# .pre-commit-config.yaml
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+
+  - repo: https://github.com/psf/black
+    rev: 23.3.0
+    hooks:
+      - id: black
+        language_version: python3
+        args: ['--line-length=88']
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        args: ["--profile", "black", "--line-length=88"]
+
+  - repo: https://github.com/PyCQA/flake8
+    rev: 6.0.0
+    hooks:
+      - id: flake8
+        args: ['--max-line-length=88', '--extend-ignore=E203,E266,E501,W503']
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.3.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-all]
+        args: ['--ignore-missing-imports', '--disallow-untyped-defs']
+
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v1.52.2
+    hooks:
+      - id: golangci-lint
+        args: ['--config=.golangci.yml']
+
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+      - id: go-vet
+      - id: go-imports
+      - id: go-cyclo
+        args: [-over=15]
+      - id: validate-toml
+      - id: no-go-testing
+      - id: golangci-lint
+      - id: go-critic
+      - id: go-unit-tests
+      - id: go-build
+      - id: go-mod-tidy
+
+  - repo: local
+    hooks:
+      - id: check-dev-txt
+        name: Check dev.txt
+        entry: python scripts/check_dev_txt.py
+        language: python
+        files: dev\.txt$
+        pass_filenames: false
+
+      - id: update-changelog
+        name: Update CHANGELOG.md
+        entry: python scripts/update_changelog.py
+        language: python
+        files: ^(CHANGELOG\.md|version\.txt)$
+        pass_filenames: false
+
+      - id: run-tests
+        name: Run tests
+        entry: make test
+        language: system
+        types: [go, python]
+        pass_filenames: false
+
+      - id: check-api-docs
+        name: Check API documentation
+        entry: python scripts/check_api_docs.py
+        language: python
+        files: ^(api/|docs/)
+        pass_filenames: false
+
+      - id: check-security
+        name: Check for security vulnerabilities
+        entry: safety check
+        language: system
+        pass_filenames: false
+
+      - id: check-dependencies
+        name: Check for outdated dependencies
+        entry: pip list --outdated
+        language: system
+        pass_filenames: false
+
+      - id: check-code-complexity
+        name: Check code complexity
+        entry: python scripts/check_complexity.py
+        language: python
+        types: [python, go]
+        pass_filenames: false
+
+      - id: validate-ci-config
+        name: Validate CI configuration
+        entry: python scripts/validate_ci_config.py
+        language: python
+        files: ^\.github/workflows/
+        pass_filenames: false
+
+      - id: check-env-variables
+        name: Check environment variables
+        entry: python scripts/check_env_variables.py
+        language: python
+        files: ^\.env\.example$
+        pass_filenames: false
+
+      - id: lint-dockerfile
+        name: Lint Dockerfile
+        entry: hadolint
+        language: system
+        files: ^Dockerfile$
+        pass_filenames: true
+
+      - id: check-api-versioning
+        name: Check API versioning
+        entry: python scripts/check_api_versioning.py
+        language: python
+        files: ^api/
+        pass_filenames: false
+
+      - id: check-commit-message
+        name: Check commit message
+        entry: python scripts/check_commit_message.py
+        language: python
+        stages: [commit-msg]
+        pass_filenames: false
+
+      - id: check-branch-name
+        name: Check branch name
+        entry: python scripts/check_branch_name.py
+        language: python
+        stages: [push, manual]
+        pass_filenames: false
+
+      - id: generate-api-docs
+        name: Generate API documentation
+        entry: python scripts/generate_api_docs.py
+        language: python
+        files: ^api/
+        pass_filenames: false
+
+      - id: update-requirements
+        name: Update requirements
+        entry: pip-compile requirements.in
+        language: system
+        files: ^requirements\.in$
+        pass_filenames: false
+
+      - id: check-file-encoding
+        name: Check file encoding
+        entry: python scripts/check_file_encoding.py
+        language: python
+        types: [text]
+        pass_filenames: true
+
+      - id: check-database-migrations
+        name: Check database migrations
+        entry: python scripts/check_database_migrations.py
+        language: python
+        files: ^migrations/
+        pass_filenames: false
+
+      - id: validate-json
+        name: Validate JSON files
+        entry: python scripts/validate_json.py
+        language: python
+        types: [json]
+        pass_filenames: true
+
+      - id: check-api-response-schemas
+        name: Check API response schemas
+        entry: python scripts/check_api_response_schemas.py
+        language: python
+        files: ^api/
+        pass_filenames: false
+
+      - id: check-python-debug-statements
+        name: Check for Python debug statements
+        entry: python scripts/check_python_debug_statements.py
+        language: python
+        types: [python]
+        pass_filenames: true

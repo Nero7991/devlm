@@ -447,7 +447,7 @@ def check_progress(structure):
     
     return brief
 
-def update_technical_brief(file_path, content, iteration):
+def update_technical_brief(file_path, content, iteration, mode="generate", test_info=None):
     with open(TECHNICAL_BRIEF_FILE, 'r') as f:
         brief = json.load(f)
     
@@ -457,10 +457,8 @@ def update_technical_brief(file_path, content, iteration):
         file_entry = {"name": os.path.basename(file_path), "functions": [], "status": "not_started"}
         update_file_entry(brief["directories"], file_path, file_entry)
 
-    # Store the original file entry for comparison
-    original_file_entry = copy.deepcopy(file_entry)
-
-    prompt = f"""Based on the following file content, please generate a complete and valid JSON object for the technical brief of the file {os.path.basename(file_path)}. The brief should include a summary of the file's purpose and a list of functions with their inputs, outputs, and a brief summary. Also, include a "todo" field for each function if there's anything that needs to be completed or improved.
+    if mode == "generate":
+        prompt = f"""Based on the following file content, please generate a complete and valid JSON object for the technical brief of the file {os.path.basename(file_path)}. The brief should include a summary of the file's purpose and a list of functions with their inputs, outputs, and a brief summary. Also, include a "todo" field for each function if there's anything that needs to be completed or improved.
 
 File content:
 {content}
@@ -486,60 +484,60 @@ Output format:
 Important: Ensure that the JSON is complete, properly formatted, and enclosed in triple backticks. Do not include any text outside the JSON object.
 """
 
-    try:
-        response_text = llm_client.generate_response(prompt, 4000)
-        
-        json_match = re.search(r'```(?:json)?\n([\s\S]*?)\n```', response_text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            json_str = response_text
-
         try:
-            brief_content = json.loads(json_str)
-        except json.JSONDecodeError:
-            brief_content = json5_load(StringIO(json_str))
-
-        file_entry.update(brief_content)
-        file_entry["last_updated_iteration"] = iteration
-        
-        def is_todo_empty(todo):
-            if not todo:
-                return True
-            todo_lower = str(todo).lower().strip()
-            return todo_lower in ['', 'none', 'n/a', 'na', 'null']
-
-        # Update the status based on the presence of non-empty todos
-        if any(not is_todo_empty(func.get("todo")) for func in file_entry["functions"]):
-            file_entry["status"] = "in_progress"
-        else:
-            file_entry["status"] = "done"
-
-        # Update root directory summary if this is a root-level file
-        if len(file_path.split(os.sep)) == 1:
-            update_root_directory_summary(brief)
-        else:
-            # Update directory summary for non-root files
-            update_directory_summary(brief, os.path.dirname(file_path))
-
-        # Compare the updated file entry with the original
-        if file_entry != original_file_entry:
-            print(f"File entry for {os.path.basename(file_path)} has been updated:")
+            response_text = llm_client.generate_response(prompt, 4000)
             
-        else:
-            print(f"Warning: File entry for {os.path.basename(file_path)} remained unchanged after update.")
+            json_match = re.search(r'```(?:json)?\n([\s\S]*?)\n```', response_text)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                json_str = response_text
 
-    except Exception as e:
-        print(f"Error updating technical brief for {file_path}: {str(e)}")
-        file_entry.update({
-            "name": os.path.basename(file_path),
-            "summary": f"Error generating technical brief for {os.path.basename(file_path)}",
-            "functions": [],
-            "status": "error",
-            "last_updated_iteration": iteration
-        })
+            try:
+                brief_content = json.loads(json_str)
+            except json.JSONDecodeError:
+                brief_content = json5_load(StringIO(json_str))
 
-    # Save the updated brief immediately after updating a file
+            file_entry.update(brief_content)
+            file_entry["last_updated_iteration"] = iteration
+            
+            def is_todo_empty(todo):
+                if not todo:
+                    return True
+                todo_lower = str(todo).lower().strip()
+                return todo_lower in ['', 'none', 'n/a', 'na', 'null']
+
+            if any(not is_todo_empty(func.get("todo")) for func in file_entry["functions"]):
+                file_entry["status"] = "in_progress"
+            else:
+                file_entry["status"] = "done"
+
+        except Exception as e:
+            print(f"Error updating technical brief for {file_path}: {str(e)}")
+            file_entry.update({
+                "name": os.path.basename(file_path),
+                "summary": f"Error generating technical brief for {os.path.basename(file_path)}",
+                "functions": [],
+                "status": "error",
+                "last_updated_iteration": iteration
+            })
+
+    elif mode == "test":
+        if test_info:
+            if "test_status" not in file_entry:
+                file_entry["test_status"] = []
+            file_entry["test_status"].append({
+                "timestamp": datetime.now().isoformat(),
+                "info": test_info
+            })
+        file_entry["last_updated_iteration"] = iteration
+        file_entry["status"] = "tested"
+
+    if len(file_path.split(os.sep)) == 1:
+        update_root_directory_summary(brief)
+    else:
+        update_directory_summary(brief, os.path.dirname(file_path))
+
     save_technical_brief(brief)
 
     return brief
@@ -670,6 +668,26 @@ ALLOWED_COMMANDS = [
 
 import subprocess
 
+TEST_PROGRESS_FILE = "test_progress.json"
+
+def load_test_progress():
+    if os.path.exists(TEST_PROGRESS_FILE):
+        with open(TEST_PROGRESS_FILE, 'r') as f:
+            return json.load(f)
+    return {"completed_tests": [], "current_step": None}
+
+def save_test_progress(progress):
+    with open(TEST_PROGRESS_FILE, 'w') as f:
+        json.dump(progress, f, indent=2)
+
+def update_test_progress(completed_test=None, current_step=None):
+    progress = load_test_progress()
+    if completed_test:
+        progress["completed_tests"].append(completed_test)
+    if current_step:
+        progress["current_step"] = current_step
+    save_test_progress(progress)
+
 def execute_command(command):
     try:
         result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
@@ -685,51 +703,149 @@ def read_file(file_path):
     with open(file_path, 'r') as f:
         return f.read()
 
+def load_technical_brief():
+    if os.path.exists(TECHNICAL_BRIEF_FILE):
+        with open(TECHNICAL_BRIEF_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def get_file_technical_brief(technical_brief, file_path):
+    for directory in technical_brief["directories"]:
+        for file in directory["files"]:
+            if file["name"] == os.path.basename(file_path):
+                return file
+    return None
+
 def test_and_debug_mode(llm_client):
+    with open('project_summary.md', 'r') as f:
+        project_summary = f.read()
+
+    technical_brief = load_technical_brief()
+    directory_summaries = technical_brief.get("directory_summaries", {})
     project_structure = read_project_structure()
+    test_progress = load_test_progress()
+    
+    print("Entering test and debug mode...")
+    print(f"Completed tests: {test_progress['completed_tests']}")
+    print(f"Current step: {test_progress['current_step']}")
+
+    iteration = 1
+
     while True:
         prompt = f"""
-        Based on the following project structure, suggest a test to run or a file to inspect:
+        You are in test and debug mode for the DevLM project.
+
+        Project Summary:
+        {project_summary}
+
+        Directory Summaries:
+        {json.dumps(directory_summaries, indent=2)}
+
+        Project Structure:
         {json.dumps(project_structure, indent=2)}
 
-        You can use the following commands: {', '.join(ALLOWED_COMMANDS)}
-        
-        If you want to inspect a file, reply with "INSPECT: <file_path>".
-        If you want to modify a file, reply with "MODIFY: <file_path>".
-        If you're done testing, reply with "DONE".
+        Test Progress:
+        Completed tests: {test_progress['completed_tests']}
+        Current step: {test_progress['current_step']}
 
-        What would you like to do?
+        Based on this information, suggest the next step to complete the project. You can:
+        1. Run a test using one of these commands: {', '.join(ALLOWED_COMMANDS)}
+        2. Inspect a file by replying with "INSPECT: <file_path>"
+        3. Modify a file by replying with "MODIFY: <file_path>"
+        4. Finish testing by replying with "DONE"
+
+        What would you like to do next to progress towards project completion?
         """
         
-        response = llm_client.generate_response(prompt, 2000)
+        print("\nGenerating next step...")
+        response = llm_client.generate_response(prompt, 4000)
+        print(f"LLM response: {response}")
         
         if response.startswith("INSPECT:"):
             file_path = response.split(":")[1].strip()
             file_content = read_file(file_path)
-            print(f"Content of {file_path}:\n{file_content}")
+            file_brief = get_file_technical_brief(technical_brief, file_path)
+            print(f"\nInspecting file: {file_path}")
+            print(f"File technical brief: {json.dumps(file_brief, indent=2)}")
+            print(f"File content:\n{file_content}")
+            
+            analysis_prompt = f"""
+            Analyze the following file content and technical brief. Identify any issues, potential improvements, or discrepancies between the code and the brief.
+
+            File path: {file_path}
+            File content:
+            {file_content}
+
+            Technical brief:
+            {json.dumps(file_brief, indent=2)}
+
+            Provide a brief analysis of any problems found or improvements needed:
+            """
+            analysis = llm_client.generate_response(analysis_prompt, 2000)
+            print(f"File analysis:\n{analysis}")
+            
+            technical_brief = update_technical_brief(file_path, file_content, iteration, mode="test", test_info=analysis)
+            update_test_progress(current_step=f"Inspected {file_path}")
         
         elif response.startswith("MODIFY:"):
             file_path = response.split(":")[1].strip()
             current_content = read_file(file_path)
+            file_brief = get_file_technical_brief(technical_brief, file_path)
             modification_prompt = f"""
             Current content of {file_path}:
             {current_content}
 
-            Please provide the updated content for this file:
+            Technical brief:
+            {json.dumps(file_brief, indent=2)}
+
+            Please provide the updated content for this file, addressing any issues or improvements needed:
             """
             new_content = llm_client.generate_response(modification_prompt, 4000)
             modify_file(file_path, new_content)
-            print(f"Updated {file_path}")
+            print(f"\nModified {file_path}")
+            
+            changes_prompt = f"""
+            Summarize the changes made to the file {file_path}. Compare the original content:
+            {current_content}
+
+            With the new content:
+            {new_content}
+
+            Provide a brief summary of the modifications:
+            """
+            changes_summary = llm_client.generate_response(changes_prompt, 1000)
+            print(f"Changes summary:\n{changes_summary}")
+            
+            technical_brief = update_technical_brief(file_path, new_content, iteration, mode="test", test_info=changes_summary)
+            update_test_progress(current_step=f"Modified {file_path}")
         
         elif response.lower() == "done":
+            print("\nTest and debug mode completed.")
             break
         
         else:
             if any(cmd in response for cmd in ALLOWED_COMMANDS):
+                print(f"\nExecuting command: {response}")
                 output = execute_command(response)
                 print(f"Command output:\n{output}")
+                update_test_progress(completed_test=response, current_step=f"Executed {response}")
+                
+                analysis_prompt = f"""
+                Analyze the following command output. Identify any issues, errors, or unexpected results.
+
+                Command: {response}
+                Output:
+                {output}
+
+                Provide a brief analysis of the command execution:
+                """
+                analysis = llm_client.generate_response(analysis_prompt, 1000)
+                print(f"Command analysis:\n{analysis}")
             else:
                 print("Invalid command or action.")
+
+        test_progress = load_test_progress()
+        iteration += 1
 
 def find_file_entry(directories, file_path):
     path_parts = file_path.split(os.sep)

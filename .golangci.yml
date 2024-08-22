@@ -1,0 +1,253 @@
+# Configuration file for golangci-lint
+# See https://golangci-lint.run/usage/configuration/ for more options
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+    - gosec
+    - gofmt
+    - goimports
+    - revive
+    - misspell
+    - prealloc
+    - unconvert
+    - unparam
+    - cyclop
+    - bodyclose
+    - dupl
+    - durationcheck
+    - errorlint
+    - exhaustive
+    - exportloopref
+    - forbidigo
+    - funlen
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - godox
+    - goerr113
+    - gomnd
+    - goprintffuncname
+    - lll
+    - makezero
+    - nestif
+    - nilerr
+    - nlreturn
+    - noctx
+    - nolintlint
+    - paralleltest
+    - predeclared
+    - rowserrcheck
+    - sqlclosecheck
+    - thelper
+    - tparallel
+    - whitespace
+    - wrapcheck
+    - errname
+    - forcetypeassert
+    - gci
+    - goheader
+    - gomoddirectives
+    - importas
+    - promlinter
+    - tagliatelle
+    - testpackage
+    - contextcheck
+    - containedctx
+    - nilnil
+    - nosprintfhostport
+
+linters-settings:
+  govet:
+    check-shadowing: true
+  golint:
+    min-confidence: 0
+  gocyclo:
+    min-complexity: 15
+  maligned:
+    suggest-new: true
+  dupl:
+    threshold: 100
+  goconst:
+    min-len: 2
+    min-occurrences: 2
+  misspell:
+    locale: US
+  lll:
+    line-length: 120
+  goimports:
+    local-prefixes: github.com/Nero7991/devlm
+  funlen:
+    lines: 100
+    statements: 50
+  godox:
+    keywords:
+      - NOTE
+      - OPTIMIZE
+      - HACK
+  gocognit:
+    min-complexity: 20
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+  gomnd:
+    settings:
+      mnd:
+        checks:
+          - argument
+          - case
+          - condition
+          - operation
+          - return
+  gomodguard:
+    blocked:
+      modules:
+        - github.com/golang/protobuf:
+            recommendations:
+              - google.golang.org/protobuf
+            reason: "see https://developers.google.com/protocol-buffers/docs/reference/go/faq#modules"
+  nolintlint:
+    allow-unused: false
+    require-explanation: true
+    require-specific: true
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  goheader:
+    values:
+      const:
+        AUTHOR: Your Name
+        COMPANY: Your Company
+    template: |-
+      Copyright (c) {{ YEAR }} {{ COMPANY }}
+      
+      This software is released under the MIT License.
+      https://opensource.org/licenses/MIT
+  cyclop:
+    max-complexity: 15
+    package-average: 10.0
+    skip-tests: false
+  errorlint:
+    errorf: true
+    asserts: true
+    comparison: true
+  exhaustive:
+    check-generated: false
+    default-signifies-exhaustive: false
+  forbidigo:
+    forbid:
+      - ^print$
+      - ^println$
+      - ^panic$
+      - ^fmt\.Print.*$
+  gci:
+    local-prefixes: github.com/Nero7991/devlm
+  gomoddirectives:
+    replace-local: false
+    replace-allow-list:
+      - golang.org/x/
+  importas:
+    no-unaliased: true
+    alias:
+      - pkg: github.com/Nero7991/devlm/pkg/util
+        alias: devutil
+  promlinter:
+    strict: false
+  tagliatelle:
+    case:
+      use-field-name: true
+      rules:
+        json: snake
+        yaml: snake
+        xml: snake
+        bson: snake
+        avro: snake
+        mapstructure: kebab
+  testpackage:
+    skip-regexp: (export|internal)_test\.go
+  wrapcheck:
+    ignoreSigs:
+      - .Errorf(
+      - errors.New(
+      - errors.Unwrap(
+      - .Wrap(
+      - .Wrapf(
+      - .WithMessage(
+      - .WithMessagef(
+      - .WithStack(
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
+        - dupl
+    - path: pkg/util/
+      linters:
+        - gomnd
+    - text: "G104:"
+      linters:
+        - gosec
+    - text: "G204:"
+      linters:
+        - gosec
+    - path: internal/
+      linters:
+        - gochecknoglobals
+    - linters:
+        - lll
+      source: "^//go:generate "
+    - path: pkg/models/
+      linters:
+        - govet
+      text: "struct field .* should be"
+    - path: internal/handlers/
+      linters:
+        - dupl
+    - path: cmd/
+      linters:
+        - forbidigo
+      text: "use of `fmt.Print.*` forbidden"
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  sort-results: true
+  uniq-by-line: false
+
+severity:
+  default-severity: error
+  rules:
+    - linters:
+        - dupl
+      severity: warning
+    - linters:
+        - gosec
+      severity: warning
+    - linters:
+        - goconst
+      severity: info
+
+custom:
+  project-name: devlm
+  maintainer-email: maintainer@example.com

@@ -1,0 +1,213 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devlm-api
+  labels:
+    app: devlm
+    tier: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: devlm
+      tier: api
+  template:
+    metadata:
+      labels:
+        app: devlm
+        tier: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: devlm-api
+        image: <REGISTRY_URL>/devlm-api:<TAG>
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: db-host
+        - name: DB_PORT
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: db-port
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: db-user
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: db-password
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: db-name
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: redis-host
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: redis-port
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: redis-password
+        - name: LLM_SERVICE_URL
+          value: "http://llm-service:8000"
+        - name: WORKER_SERVICE_URL
+          value: "http://worker-service:8080"
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: jwt-secret
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: encryption-key
+        - name: LLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: llm-api-key
+        - name: SEARCH_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: search-api-key
+        - name: API_VERSION
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: api-version
+        - name: API_RATE_LIMIT
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: api-rate-limit
+        - name: API_RATE_LIMIT_PERIOD
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: api-rate-limit-period
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: JAEGER_AGENT_HOST
+          value: "jaeger-agent.observability.svc.cluster.local"
+        - name: JAEGER_AGENT_PORT
+          value: "6831"
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          failureThreshold: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: certs
+          mountPath: /etc/ssl/certs
+          readOnly: true
+      securityContext:
+        fsGroup: 1000
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: certs
+        hostPath:
+          path: /etc/ssl/certs
+          type: Directory
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - devlm
+              topologyKey: "kubernetes.io/hostname"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devlm-api-service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "<SSL_CERT_ARN>"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+spec:
+  selector:
+    app: devlm
+    tier: api
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 8080
+    - name: https
+      protocol: TCP
+      port: 443
+      targetPort: 8080
+  type: LoadBalancer
+---
+apiVersion: autoscaling/v2beta1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: devlm-api-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: devlm-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      targetAverageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      targetAverageUtilization: 80

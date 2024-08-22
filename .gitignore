@@ -1,0 +1,533 @@
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.tox/
+.eggs/
+venv/
+env/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnp/
+.pnp.js
+coverage/
+.next/
+out/
+.nuxt/
+.cache/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Project specific
+/dev.txt
+/version.txt
+/tmp/
+/sandbox/
+
+# Dependency directories
+vendor/
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Python virtual environments
+venv/
+*.venv
+env/
+*.env
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Ansible
+*.retry
+
+# Vagrant
+.vagrant/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory
+coverage
+
+# nyc test coverage
+.nyc_output
+
+# Grunt intermediate storage
+.grunt
+
+# Bower dependency directory
+bower_components
+
+# node-waf configuration
+.lock-wscript
+
+# Compiled binary addons
+build/Release
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env
+.env.test
+
+# parcel-bundler cache
+.cache
+.parcel-cache
+
+# Next.js build output
+.next
+out
+
+# Nuxt.js build / generate output
+.nuxt
+dist
+
+# Gatsby files
+.cache/
+
+# vuepress build output
+.vuepress/dist
+
+# Serverless directories
+.serverless/
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# TernJS port file
+.tern-port
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# yarn v2
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# Rust
+target/
+**/*.rs.bk
+
+# Swift
+.build/
+Packages/
+Package.pins
+Package.resolved
+*.xcodeproj
+.swiftpm/
+
+# Kotlin
+*.iml
+.gradle/
+build/
+out/
+
+# Elixir
+/_build
+/cover
+/deps
+/doc
+/.fetch
+erl_crash.dump
+*.ez
+*.beam
+/config/*.secret.exs
+.elixir_ls/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~.nib
+*.swm
+*.swo
+
+# Large media files
+*.mp4
+*.tiff
+*.avi
+*.flv
+*.mov
+*.wmv
+
+# Project-specific ignores
+/config/secrets.yaml
+/data/
+/logs/
+/temp/
+*.local.yaml
+
+# Ignore compiled files
+*.pyc
+*.o
+*.a
+*.class
+
+# Ignore R data files
+.RData
+.Rhistory
+
+# Ignore Julia compiled files
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+
+# Ignore Haskell compiled files
+dist
+dist-*
+cabal-dev
+*.o
+*.hi
+*.chi
+*.chs.h
+*.dyn_o
+*.dyn_hi
+.hpc
+.hsenv
+.cabal-sandbox/
+cabal.sandbox.config
+*.prof
+*.aux
+*.hp
+*.eventlog
+.stack-work/
+cabal.project.local
+cabal.project.local~
+.HTF/
+.ghc.environment.*
+
+# Ignore MATLAB autosave files
+*.asv
+
+# Ignore Visual Studio files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Ignore Eclipse files
+.metadata
+bin/
+tmp/
+*.tmp
+*.bak
+*.swp
+*~.nib
+local.properties
+.settings/
+.loadpath
+.recommenders
+
+# Ignore Xcode files
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+
+# Ignore Android Studio files
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+
+# Ignore Unity3D generated meta files
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# Ignore Unity3D Generated File On Crash Reports
+sysinfo.txt
+
+# Ignore Godot-specific ignores
+.import/
+export.cfg
+export_presets.cfg
+
+# Ignore Chef files
+.kitchen/
+.kitchen.local.yml
+
+# Ignore Puppet files
+.librarian
+.tmp
+.vagrant
+
+# Ignore Packer files
+packer_cache/
+
+# Ignore custom scripts
+*.custom.sh
+
+# Ignore sensitive configuration files
+**/config/secrets.*
+
+# Ignore backup files
+*.bak
+*.gho
+*.ori
+*.orig
+*.tmp
+
+# Ignore lock files
+*.lock
+!package-lock.json
+!yarn.lock
+
+# Ignore build output directories
+/dist
+/out
+/build
+
+# Ignore macOS folder attributes
+.AppleDouble
+.LSOverride
+
+# Ignore thumbnails
+._*
+
+# Ignore Windows folder config file
+Desktop.ini
+
+# Ignore Windows Installer files
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+
+# Ignore Windows shortcuts
+*.lnk
+
+# Ignore tags created by etags, ctags, gtags (GNU global) and cscope
+TAGS
+.TAGS
+!TAGS/
+tags
+.tags
+!tags/
+gtags.files
+GTAGS
+GRTAGS
+GPATH
+GSYMS
+cscope.files
+cscope.out
+cscope.in.out
+cscope.po.out
+
+# Ignore patch files
+*.orig
+*.rej
+
+# Ignore Mercurial files
+.hg/
+.hgignore
+.hgsigs
+.hgsub
+.hgsubstate
+.hgtags
+
+# Ignore SVN files
+.svn/
+
+# Ignore CVS files
+/CVS/*
+**/CVS/*
+.cvsignore
+*/.cvsignore
+
+# Ignore Bazaar files
+.bzr/
+.bzrignore
+
+# Ignore Local History for Visual Studio Code
+.history/
+
+# Ignore *.orig files created by git merge
+*.orig
+
+# Ignore any file with LOCAL, REMOTE, BASE, or BACKUP in the name (temp files created by git)
+*LOCAL*
+*REMOTE*
+*BASE*
+*BACKUP*
+
+# Ignore Dropbox settings and caches
+.dropbox
+.dropbox.attr
+.dropbox.cache
+
+# Ignore .nfs files created when an open file is removed but is still being accessed
+.nfs*
+
+# Ignore Linux trash folder which might appear on any partition or disk
+.Trash-*
+
+# Ignore .directory files created by KDE Dolphin file manager
+.directory
+
+# Ignore Session.vim
+Session.vim
+
+# Ignore Persistent undo
+[._]*.un~
+
+# Ignore .netrwhist file created by vim
+.netrwhist
+
+# DevLM specific ignores
+/llm_cache/
+/model_checkpoints/
+/api_keys.json
+/user_data/
+/logs/
+/temp_files/
+/generated_code/
+/test_results/
+/profiling_data/
+/documentation/generated/

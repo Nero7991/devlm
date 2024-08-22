@@ -1,0 +1,222 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20'
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install linters
+      run: |
+        go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        pip install flake8 mypy black isort pylint
+        npm install -g eslint
+
+    - name: Run linters
+      run: |
+        golangci-lint run
+        flake8 .
+        mypy .
+        pylint **/*.py
+        eslint .
+
+    - name: Check code formatting
+      run: |
+        if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then
+          echo "Go files are not formatted. Run 'gofmt -w .' to fix."
+          exit 1
+        fi
+        black --check .
+        isort --check-only .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.19', '1.20']
+        python-version: ['3.10', '3.11']
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Go ${{ matrix.go-version }}
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache Go dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        go mod download
+        pip install -r requirements.txt
+
+    - name: Run Go tests
+      run: |
+        go test -v -race -coverprofile=coverage.out ./...
+        go tool cover -func=coverage.out
+
+    - name: Run Python tests
+      run: |
+        pytest --cov=. --cov-report=xml
+
+    - name: Run integration tests
+      run: |
+        go test -v -tags=integration ./...
+        pytest -v tests/integration
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./coverage.out,./coverage.xml
+
+  build:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20'
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Build Go binaries
+      run: |
+        VERSION=$(git describe --tags --always)
+        go build -ldflags="-X main.Version=$VERSION" -o api_gateway cmd/api_gateway/main.go
+        go build -ldflags="-X main.Version=$VERSION" -o action_executor cmd/action_executor/main.go
+        go build -ldflags="-X main.Version=$VERSION" -o code_execution_engine cmd/code_execution_engine/main.go
+
+    - name: Build Python service
+      run: |
+        cd python_llm_service
+        pip install -e .
+
+    - name: Archive artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: binaries
+        path: |
+          api_gateway
+          action_executor
+          code_execution_engine
+          python_llm_service
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Build and push Docker images
+      env:
+        DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+      run: |
+        echo ${{ secrets.DOCKER_PASSWORD }} | docker login $DOCKER_REGISTRY -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
+        
+        VERSION=$(git describe --tags --always)
+        DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/amd64,linux/arm64 \
+          --build-arg VERSION=$VERSION \
+          -t $DOCKER_REGISTRY/devlm-api-gateway:${{ github.sha }} \
+          -t $DOCKER_REGISTRY/devlm-api-gateway:latest \
+          -f Dockerfile.api_gateway .
+        
+        DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/amd64,linux/arm64 \
+          --build-arg VERSION=$VERSION \
+          -t $DOCKER_REGISTRY/devlm-action-executor:${{ github.sha }} \
+          -t $DOCKER_REGISTRY/devlm-action-executor:latest \
+          -f Dockerfile.action_executor .
+        
+        DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/amd64,linux/arm64 \
+          --build-arg VERSION=$VERSION \
+          -t $DOCKER_REGISTRY/devlm-code-execution-engine:${{ github.sha }} \
+          -t $DOCKER_REGISTRY/devlm-code-execution-engine:latest \
+          -f Dockerfile.code_execution_engine .
+        
+        DOCKER_BUILDKIT=1 docker buildx build --push --platform linux/amd64,linux/arm64 \
+          --build-arg VERSION=$VERSION \
+          -t $DOCKER_REGISTRY/devlm-python-llm-service:${{ github.sha }} \
+          -t $DOCKER_REGISTRY/devlm-python-llm-service:latest \
+          -f Dockerfile.python_llm_service .
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Configure kubectl
+      uses: azure/k8s-set-context@v1
+      with:
+        kubeconfig: ${{ secrets.KUBECONFIG }}
+
+    - name: Deploy to staging
+      env:
+        DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+      run: |
+        kubectl apply -f k8s/staging/
+        kubectl set image deployment/api-gateway api-gateway=$DOCKER_REGISTRY/devlm-api-gateway:${{ github.sha }}
+        kubectl set image deployment/action-executor action-executor=$DOCKER_REGISTRY/devlm-action-executor:${{ github.sha }}
+        kubectl set image deployment/code-execution-engine code-execution-engine=$DOCKER_REGISTRY/devlm-code-execution-engine:${{ github.sha }}
+        kubectl set image deployment/python-llm-service python-llm-service=$DOCKER_REGISTRY/devlm-python-llm-service:${{ github.sha }}
+
+    - name: Verify deployment
+      run: |
+        kubectl rollout status deployment/api-gateway
+        kubectl rollout status deployment/action-executor
+        kubectl rollout status deployment/code-execution-engine
+        kubectl rollout status deployment/python-llm-service
+
+    - name: Run integration tests
+      run: |
+        python integration_tests/run_tests.py --environment staging
+
+    - name: Performance testing
+      run: |
+        k6 run performance_tests/load_test.js
+
+    - name: Rollback on failure
+      if: failure()
+      run: |
+        kubectl rollout undo deployment/api-gateway
+        kubectl rollout undo deployment/action-executor
+        kubectl rollout undo deployment/code-execution-engine
+        kubectl rollout undo deployment/python-llm-service

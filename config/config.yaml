@@ -1,0 +1,488 @@
+```yaml
+# DevLM Project Configuration
+
+# Database Configuration
+database:
+  host: "DB_HOST_PLACEHOLDER"
+  port: 5432
+  name: "DB_NAME_PLACEHOLDER"
+  user: "DB_USER_PLACEHOLDER"
+  password: "DB_PASSWORD_PLACEHOLDER"
+  max_connections: 100
+  connection_timeout: 30
+  idle_timeout: 300
+  secret_manager:
+    provider: "vault"
+    path: "secret/devlm/database"
+  connection_pool:
+    min_size: 5
+    max_size: 20
+  read_replica:
+    enabled: true
+    host: "DB_READ_REPLICA_HOST_PLACEHOLDER"
+    port: 5432
+  query_logging:
+    enabled: true
+    slow_query_threshold: 1000  # milliseconds
+  connection_retry:
+    max_attempts: 5
+    backoff_factor: 2
+    max_delay: 60  # seconds
+  ssl:
+    enabled: true
+    cert_file: "/path/to/db_cert.pem"
+    key_file: "/path/to/db_key.pem"
+    ca_file: "/path/to/db_ca.pem"
+
+# Redis Configuration
+redis:
+  host: "REDIS_HOST_PLACEHOLDER"
+  port: 6379
+  password: "REDIS_PASSWORD_PLACEHOLDER"
+  pool_size: 20
+  min_idle_connections: 5
+  max_retries: 3
+  idle_timeout: 300
+  sentinel:
+    enabled: true
+    master_name: "mymaster"
+    sentinels:
+      - host: "SENTINEL_HOST_1"
+        port: 26379
+      - host: "SENTINEL_HOST_2"
+        port: 26379
+  cluster:
+    enabled: false
+    nodes:
+      - host: "REDIS_CLUSTER_NODE_1"
+        port: 6379
+      - host: "REDIS_CLUSTER_NODE_2"
+        port: 6379
+  key_prefix: "devlm:"
+  ssl:
+    enabled: true
+    cert_file: "/path/to/redis_cert.pem"
+    key_file: "/path/to/redis_key.pem"
+    ca_file: "/path/to/redis_ca.pem"
+  health_check:
+    enabled: true
+    interval: 60  # seconds
+
+# LLM API Configuration
+llm_api:
+  key: "LLM_API_KEY_PLACEHOLDER"
+  url: "https://api.llm-provider.com/v1"
+  timeout: 30
+  max_retries: 3
+  providers:
+    - name: "primary"
+      model: "claude-v1"
+      weight: 0.7
+    - name: "fallback"
+      model: "gpt-3.5-turbo"
+      weight: 0.3
+  key_rotation:
+    enabled: true
+    interval: 86400  # 24 hours
+    provider: "aws_secrets_manager"
+    secret_name: "llm_api_keys"
+  rate_limiting:
+    requests_per_minute: 100
+    burst: 20
+  load_balancing:
+    strategy: "least_connections"
+  error_handling:
+    retry_codes:
+      - 429
+      - 500
+      - 503
+    backoff_factor: 2
+  streaming:
+    enabled: true
+    chunk_size: 1024  # bytes
+  prompt_optimization:
+    enabled: true
+    techniques:
+      - "few_shot_learning"
+      - "chain_of_thought"
+  caching:
+    enabled: true
+    ttl: 3600  # 1 hour
+    backend: "redis"
+
+# Search Engine API Configuration
+search_api:
+  key: "SEARCH_API_KEY_PLACEHOLDER"
+  url: "https://api.search-provider.com/v1"
+  providers:
+    - google
+    - bing
+    - duckduckgo
+  timeout: 10
+  max_results: 10
+  cache:
+    enabled: true
+    ttl: 3600  # 1 hour
+    backend: "redis"
+  fallback:
+    enabled: true
+    strategy: "next_provider"
+  rate_limiting:
+    requests_per_minute: 60
+    burst: 10
+  result_filtering:
+    enabled: true
+    adult_content: false
+    max_age: 365  # days
+  custom_search_engines:
+    - name: "tech_news"
+      cx: "CUSTOM_SEARCH_ENGINE_ID_PLACEHOLDER"
+
+# Code Execution Engine Configuration
+code_execution:
+  sandbox_image: "alpine:latest"
+  max_execution_time: 30  # seconds
+  max_memory: 256  # MB
+  cpu_limit: "1"
+  network_access: false
+  allowed_syscalls:
+    - read
+    - write
+    - exit
+  resource_monitoring:
+    enabled: true
+    interval: 5  # seconds
+    alert_threshold:
+      cpu: 90  # percent
+      memory: 80  # percent
+  container_pool:
+    enabled: true
+    min_size: 5
+    max_size: 20
+  cleanup:
+    enabled: true
+    interval: 300  # 5 minutes
+  language_support:
+    python:
+      version: "3.9"
+    javascript:
+      version: "14"
+    go:
+      version: "1.16"
+  custom_images:
+    - name: "data_science"
+      image: "jupyter/datascience-notebook:latest"
+    - name: "web_dev"
+      image: "node:14-alpine"
+  output_streaming:
+    enabled: true
+    chunk_size: 1024  # bytes
+
+# API Gateway Configuration
+api_gateway:
+  port: 8080
+  secret_key: "API_SECRET_KEY_PLACEHOLDER"
+  rate_limit:
+    requests_per_minute: 60
+    burst: 10
+  timeout: 30
+  cors:
+    allowed_origins:
+      - "https://devlm.example.com"
+    allowed_methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+  request_validation:
+    enabled: true
+    schema_path: "/path/to/api_schema.json"
+  versioning:
+    enabled: true
+    header: "X-API-Version"
+    default_version: "1.0"
+    supported_versions:
+      - "1.0"
+      - "2.0"
+  middleware:
+    - name: "authentication"
+    - name: "logging"
+    - name: "error_handling"
+  documentation:
+    enabled: true
+    provider: "swagger"
+    url: "/api/docs"
+  ssl:
+    enabled: true
+    cert_file: "/path/to/api_gateway_cert.pem"
+    key_file: "/path/to/api_gateway_key.pem"
+  circuit_breaker:
+    enabled: true
+    threshold: 0.5
+    min_requests: 20
+    interval: 60  # seconds
+
+# Logging Configuration
+logging:
+  level: "info"
+  file_path: "/var/log/devlm/app.log"
+  rotation:
+    max_size: 100  # MB
+    max_backups: 5
+    max_age: 30  # days
+  format: "json"
+  output:
+    - file
+    - stdout
+  aggregation:
+    enabled: true
+    provider: "elk"
+    host: "ELK_HOST_PLACEHOLDER"
+    port: 9200
+  tracing:
+    enabled: true
+    provider: "jaeger"
+    host: "JAEGER_HOST_PLACEHOLDER"
+    port: 6831
+  masking:
+    enabled: true
+    fields:
+      - "password"
+      - "credit_card"
+      - "ssn"
+  retention:
+    enabled: true
+    duration: 90  # days
+  structured_logging:
+    enabled: true
+    additional_fields:
+      - "request_id"
+      - "user_id"
+
+# File System Configuration
+file_system:
+  project_root: "/path/to/project/root"
+  temp_directory: "/tmp/devlm"
+  max_file_size: 10  # MB
+  allowed_extensions:
+    - .py
+    - .js
+    - .go
+  integrity_check:
+    enabled: true
+    interval: 3600  # 1 hour
+    algorithm: "sha256"
+  cleanup:
+    enabled: true
+    interval: 86400  # 24 hours
+    max_age: 604800  # 7 days
+  compression:
+    enabled: true
+    algorithm: "gzip"
+  encryption:
+    enabled: true
+    algorithm: "AES-256-GCM"
+    key: "FILE_ENCRYPTION_KEY_PLACEHOLDER"
+  versioning:
+    enabled: true
+    max_versions: 5
+  backup:
+    enabled: true
+    interval: 86400  # 24 hours
+    destination: "s3://devlm-backup-bucket"
+  distributed_storage:
+    enabled: true
+    provider: "minio"
+    endpoint: "MINIO_ENDPOINT_PLACEHOLDER"
+    access_key: "MINIO_ACCESS_KEY_PLACEHOLDER"
+    secret_key: "MINIO_SECRET_KEY_PLACEHOLDER"
+
+# Security Configuration
+security:
+  allowed_origins:
+    - "https://devlm.example.com"
+    - "https://api.devlm.example.com"
+  ssl:
+    cert_file: "/path/to/cert.pem"
+    key_file: "/path/to/key.pem"
+    min_tls_version: "TLS1.2"
+  jwt:
+    secret: "JWT_SECRET_PLACEHOLDER"
+    expiration: 3600  # seconds
+    refresh_token_expiration: 604800  # 7 days
+  ip_whitelist:
+    enabled: true
+    allowed_ips:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+  rate_limiting:
+    per_user:
+      enabled: true
+      requests_per_minute: 30
+  two_factor_auth:
+    enabled: true
+    provider: "google_authenticator"
+  headers:
+    strict_transport_security:
+      max_age: 31536000
+      include_subdomains: true
+    content_security_policy: "default-src 'self'; script-src 'self' 'unsafe-inline'"
+    x_frame_options: "DENY"
+    x_content_type_options: "nosniff"
+  dependency_scanning:
+    enabled: true
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    fail_on_high_severity: true
+  brute_force_protection:
+    enabled: true
+    max_attempts: 5
+    lockout_duration: 900  # 15 minutes
+
+# Performance Configuration
+performance:
+  max_concurrent_tasks: 4
+  cache_ttl: 3600  # seconds
+  database_connection_pool: 20
+  worker_processes: 4
+  adaptive_concurrency:
+    enabled: true
+    min_workers: 2
+    max_workers: 8
+    scale_factor: 0.5
+    check_interval: 60  # seconds
+  query_optimization:
+    enabled: true
+    slow_query_threshold: 1000  # milliseconds
+  compression:
+    enabled: true
+    algorithm: "gzip"
+    min_size: 1024  # bytes
+  connection_pooling:
+    enabled: true
+    max_size: 100
+    min_size: 10
+  cdn:
+    enabled: true
+    provider: "cloudfront"
+    domain: "cdn.devlm.example.com"
+  lazy_loading:
+    enabled: true
+    threshold: 1000  # items
+
+# Feature Flags Configuration
+feature_flags:
+  enable_web_search: true
+  enable_code_execution: true
+  enable_file_operations: true
+  enable_advanced_analytics: false
+  management:
+    provider: "launchdarkly"
+    sdk_key: "LAUNCHDARKLY_SDK_KEY_PLACEHOLDER"
+  default_rules:
+    - name: "beta_features"
+      percentage: 10
+    - name: "premium_features"
+      group: "paid_users"
+  local_override_file: "/path/to/feature_flags_override.json"
+  sync_interval: 300  # 5 minutes
+  custom_rules:
+    - name: "experimental_ui"
+      condition: "user.role == 'beta_tester'"
+
+# Monitoring Configuration
+monitoring:
+  prometheus_port: 9090
+  metrics_endpoint: "/metrics"
+  health_check_endpoint: "/health"
+  custom_metrics:
+    - name: "task_processing_time"
+      type: "histogram"
+      description: "Time taken to process a task"
+  alerting:
+    provider: "pagerduty"
+    service_key: "PAGERDUTY_SERVICE_KEY_PLACEHOLDER"
+    rules:
+      - name: "high_error_rate"
+        condition: "error_rate > 0.05"
+        duration: "5m"
+        severity: "critical"
+  dashboards:
+    provider: "grafana"
+    url: "https://grafana.devlm.example.com"
+    api_key: "GRAFANA_API_KEY_PLACEHOLDER"
+  anomaly_detection:
+    enabled: true
+    algorithm: "isolation_forest"
+    sensitivity: 0.95
+  uptime_checks:
+    enabled: true
+    interval: 60  # seconds
+    endpoints:
+      - "/api/health"
+      - "/api/ready"
+  distributed_tracing:
+    enabled: true
+    provider: "zipkin"
+    endpoint: "http://zipkin:9411/api/v2/spans"
+
+# LLM Instances Configuration
+llm_instances:
+  - name: "instance1"
+    model: "claude-v1"
+    max_tokens: 2000
+    temperature: 0.7
+  - name: "instance2"
+    model: "claude-v1"
+    max_tokens: 2000
+    temperature: 0.5
+  - name: "instance3"
+    model: "claude-v1"
+    max_tokens: 2000
+    temperature: 0.3
+  scaling:
+    enabled: true
+    min_instances: 2
+    max_instances: 10
+    scale_up_threshold: 0.8
+    scale_down_threshold: 0.2
+    cooldown_period: 300  # seconds
+  load_balancing:
+    strategy: "least_connections"
+  error_handling:
+    max_retries: 3
+    backoff_factor: 2
+  warm_up:
+    enabled: true
+    queries:
+      - "Hello, world!"
+      - "What is the capital of France?"
+  model_versioning:
+    enabled: true
+    update_strategy: "rolling"
+    rollback_threshold: 0.1  # 10% error rate increase
+  fine_tuning:
+    enabled: true
+    dataset_path: "/path/to/fine_tuning_dataset.jsonl"
+    evaluation_metric: "perplexity"
+
+# Backup Configuration
+backup:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention_period: 30  # days
+  storage:
+    type: "s3"
+    bucket: "BACKUP_BUCKET_PLACEHOLDER"
+    region: "us-west-2"
+  incremental:
+    enabled: true
+    full_backup_interval: 7  # days
+  encryption:
+    enabled: true
+    key: "BACKUP_ENCRYPTION_KEY_PLACEHOLDER"
+  compression:
+    enabled: true
+    algorithm: "zstd"
+  verification:
+    enabled: true
+    interval: 86400  # 24

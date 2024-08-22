@@ -1,0 +1,216 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devlm-llm-service
+  labels:
+    app: devlm-llm-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: devlm-llm-service
+  template:
+    metadata:
+      labels:
+        app: devlm-llm-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8000"
+    spec:
+      containers:
+      - name: devlm-llm-service
+        image: <REGISTRY_URL>/devlm-llm-service:<TAG>
+        ports:
+        - containerPort: 8000
+        resources:
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+        env:
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: redis-host
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: redis-port
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: redis-password
+        - name: CLAUDE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: claude-api-key
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: MAX_CONCURRENT_REQUESTS
+          value: "10"
+        - name: API_SERVICE_URL
+          value: "http://devlm-api-service"
+        - name: WORKER_SERVICE_URL
+          value: "http://devlm-worker-service"
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: db-host
+        - name: DB_PORT
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: db-port
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: db-name
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: db-user
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: db-password
+        - name: LLM_SERVICE_URL
+          value: "http://devlm-llm-service"
+        - name: FALLBACK_API_SERVICE_URL
+          value: "http://devlm-api-service-fallback"
+        - name: FALLBACK_WORKER_SERVICE_URL
+          value: "http://devlm-worker-service-fallback"
+        - name: FALLBACK_LLM_SERVICE_URL
+          value: "http://devlm-llm-service-fallback"
+        - name: JAEGER_AGENT_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: jaeger-agent-host
+        - name: JAEGER_AGENT_PORT
+          valueFrom:
+            secretKeyRef:
+              name: devlm-secrets
+              key: jaeger-agent-port
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - devlm-llm-service
+              topologyKey: "kubernetes.io/hostname"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devlm-llm-service
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "8000"
+spec:
+  selector:
+    app: devlm-llm-service
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2beta1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: devlm-llm-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: devlm-llm-service
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      targetAverageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      targetAverageUtilization: 80
+---
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: devlm-llm-service-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: devlm-llm-service
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: devlm-llm-service-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: devlm-llm-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: devlm-api-service
+    - podSelector:
+        matchLabels:
+          app: devlm-worker-service
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: devlm-api-service
+    - podSelector:
+        matchLabels:
+          app: devlm-worker-service
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16

@@ -1,0 +1,219 @@
+{
+  "cmd": {
+    "api": [
+      "main.go"
+    ],
+    "worker": [
+      "main.go"
+    ],
+    "llm_service": [
+      "main.py"
+    ]
+  },
+  "internal": {
+    "api": {
+      "handlers": [
+        "project_handler.go",
+        "task_handler.go",
+        "health_handler.go"
+      ],
+      "middleware": [
+        "auth_middleware.go",
+        "logging_middleware.go",
+        "rate_limiter.go"
+      ],
+      "router": [
+        "router.go"
+      ]
+    },
+    "core": {
+      "orchestrator": [
+        "orchestrator.go"
+      ],
+      "analyzer": [
+        "requirement_analyzer.go"
+      ],
+      "distributor": [
+        "task_distributor.go"
+      ],
+      "executor": [
+        "executor.go"
+      ]
+    },
+    "executor": {
+      "actions": [
+        "action_executor.go",
+        "file_operations.go",
+        "web_search.go"
+      ],
+      "sandbox": [
+        "sandbox_manager.go",
+        "container.go"
+      ]
+    },
+    "llm": {
+      "client": [
+        "llm_client.go"
+      ],
+      "prompts": [
+        "prompt_generator.go",
+        "prompt_templates.go"
+      ]
+    },
+    "models": [
+      "project.go",
+      "task.go",
+      "result.go",
+      "user.go"
+    ],
+    "storage": {
+      "cache": [
+        "redis_cache.go"
+      ],
+      "database": [
+        "postgres_db.go",
+        "migrations.go"
+      ]
+    }
+  },
+  "pkg": {
+    "logger": [
+      "logger.go"
+    ],
+    "config": [
+      "config.go"
+    ],
+    "utils": [
+      "helpers.go",
+      "validators.go",
+      "errors.go"
+    ],
+    "metrics": [
+      "prometheus.go"
+    ]
+  },
+  "llm_service": {
+    "api": [
+      "main.py",
+      "routes.py"
+    ],
+    "models": [
+      "models.py"
+    ],
+    "llm": [
+      "llm_client.py",
+      "prompt_generator.py"
+    ],
+    "utils": [
+      "helpers.py"
+    ]
+  },
+  "tests": {
+    "unit": {
+      "api": [
+        "handler_test.go",
+        "middleware_test.go"
+      ],
+      "core": [
+        "orchestrator_test.go",
+        "analyzer_test.go",
+        "executor_test.go"
+      ],
+      "executor": [
+        "action_executor_test.go",
+        "file_operations_test.go",
+        "sandbox_test.go"
+      ],
+      "llm_service": [
+        "llm_client_test.py",
+        "prompt_generator_test.py"
+      ]
+    },
+    "integration": [
+      "api_integration_test.go",
+      "worker_integration_test.go",
+      "llm_service_integration_test.py"
+    ],
+    "e2e": [
+      "e2e_test.go"
+    ],
+    "performance": [
+      "load_test.go"
+    ]
+  },
+  "deploy": {
+    "docker": [
+      "Dockerfile.api",
+      "Dockerfile.worker",
+      "Dockerfile.llm_service"
+    ],
+    "kubernetes": [
+      "api-deployment.yaml",
+      "worker-deployment.yaml",
+      "llm-service-deployment.yaml",
+      "ingress.yaml",
+      "secrets.yaml"
+    ],
+    "terraform": [
+      "main.tf",
+      "variables.tf",
+      "outputs.tf",
+      "modules.tf"
+    ]
+  },
+  "scripts": [
+    "setup.sh",
+    "run_tests.sh",
+    "build.sh",
+    "lint.sh",
+    "deploy.sh",
+    "monitoring.sh"
+  ],
+  "docs": {
+    "api": [
+      "api.md",
+      "endpoints.md"
+    ],
+    "architecture": [
+      "architecture.md",
+      "components.md",
+      "data_flow.md"
+    ],
+    "development": [
+      "contributing.md",
+      "coding_standards.md",
+      "security.md"
+    ],
+    "operations": [
+      "deployment.md",
+      "monitoring.md",
+      "troubleshooting.md"
+    ]
+  },
+  "config": [
+    ".env.example",
+    "config.yaml",
+    "config.production.yaml",
+    "config.staging.yaml",
+    "llm_config.yaml"
+  ],
+  "api": [
+    "openapi.yaml"
+  ],
+  "build": [
+    "Makefile"
+  ],
+  "": [
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "go.mod",
+    "go.sum",
+    "requirements.txt",
+    ".gitignore",
+    "docker-compose.yml",
+    ".golangci.yml",
+    ".pre-commit-config.yaml",
+    ".github/workflows/ci.yml"
+  ]
+}

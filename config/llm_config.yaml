@@ -1,0 +1,501 @@
+```yaml
+# LLM Configuration
+
+# General LLM settings
+llm:
+  default_model: "claude-v1.3"
+  max_tokens: 2048
+  temperature: 0.7
+  top_p: 1.0
+
+# LLM API configuration
+api:
+  endpoint: "https://api.anthropic.com/v1/complete"
+  key: "<YOUR_API_KEY_HERE>"
+  rotation:
+    enabled: true
+    interval: 86400  # 24 hours in seconds
+    keys:
+      - "<API_KEY_1>"
+      - "<API_KEY_2>"
+      - "<API_KEY_3>"
+  key_rotation:
+    enabled: true
+    rotation_interval: 604800  # 7 days in seconds
+    key_sources:
+      - type: "vault"
+        path: "secret/llm_api_keys"
+      - type: "environment"
+        variable: "LLM_API_KEY"
+
+# LLM instances configuration
+instances:
+  - name: "instance-1"
+    model: "claude-v1.3"
+    max_tokens: 2048
+    temperature: 0.7
+  - name: "instance-2"
+    model: "claude-v1.3"
+    max_tokens: 4096
+    temperature: 0.5
+  - name: "instance-3"
+    model: "claude-v1.3"
+    max_tokens: 1024
+    temperature: 0.9
+
+# Load balancing configuration
+load_balancing:
+  strategy: "round_robin"  # Options: round_robin, least_busy, weighted
+  health_check:
+    interval: 60  # seconds
+    timeout: 5  # seconds
+    unhealthy_threshold: 3
+    healthy_threshold: 2
+
+# Task-specific configurations
+tasks:
+  code_generation:
+    model: "claude-v1.3"
+    max_tokens: 4096
+    temperature: 0.5
+    system_prompt: "You are an expert programmer. Generate code based on the following requirements:"
+
+  code_review:
+    model: "claude-v1.3"
+    max_tokens: 2048
+    temperature: 0.3
+    system_prompt: "You are a code reviewer. Analyze the following code and provide feedback:"
+
+  requirement_analysis:
+    model: "claude-v1.3"
+    max_tokens: 3072
+    temperature: 0.6
+    system_prompt: "You are a software architect. Analyze the following project requirements:"
+
+# Prompt templates
+prompt_templates:
+  code_generation: |
+    System: {system_prompt}
+    Human: Please generate {language} code for the following requirement:
+    {requirement}
+    Assistant: Here's the {language} code based on your requirement:
+
+  code_review: |
+    System: {system_prompt}
+    Human: Please review the following {language} code:
+    ```{language}
+    {code}
+    ```
+    Assistant: Here's my review of the code:
+
+  requirement_analysis: |
+    System: {system_prompt}
+    Human: Please analyze the following project requirements:
+    {requirements}
+    Assistant: Here's my analysis of the project requirements:
+
+# Error handling and retry configuration
+error_handling:
+  max_retries: 3
+  retry_delay: 5  # seconds
+  backoff_factor: 2
+  error_codes:
+    - 429  # Too Many Requests
+    - 500  # Internal Server Error
+    - 503  # Service Unavailable
+  grouping_rules:
+    - name: "network_errors"
+      pattern: "ConnectionError|Timeout|NetworkUnreachable"
+    - name: "authentication_errors"
+      pattern: "InvalidCredentials|TokenExpired|UnauthorizedAccess"
+  filtering_rules:
+    - name: "ignore_dev_errors"
+      pattern: "DevEnvironmentError"
+      action: "ignore"
+    - name: "critical_errors"
+      pattern: "DatabaseConnectionFailed|SecurityBreach"
+      action: "alert"
+
+# Caching configuration
+caching:
+  enabled: true
+  ttl: 3600  # seconds
+  backend: "redis"  # Options: redis, memcached, in_memory
+  redis:
+    host: "localhost"
+    port: 6379
+    db: 0
+  memcached:
+    hosts:
+      - "localhost:11211"
+  in_memory:
+    max_size: 1000  # number of items
+
+# Streaming configuration
+streaming:
+  enabled: true
+  chunk_size: 100  # tokens
+  max_delay: 1000  # milliseconds
+
+# Prompt optimization
+prompt_optimization:
+  enabled: true
+  techniques:
+    - "few_shot_learning"
+    - "chain_of_thought"
+    - "self_consistency"
+  few_shot_examples: 3
+  max_examples_tokens: 1000
+
+# Monitoring and logging
+monitoring:
+  enabled: true
+  log_level: "info"  # Options: debug, info, warning, error, critical
+  metrics:
+    - "response_time"
+    - "token_usage"
+    - "error_rate"
+    - "cache_hit_rate"
+    - "request_volume"
+  alert_threshold:
+    response_time: 5000  # milliseconds
+    error_rate: 0.05  # 5%
+    token_usage: 1000000  # per hour
+  export:
+    prometheus:
+      enabled: true
+      port: 9090
+  pagerduty:
+    enabled: true
+    api_key: "<YOUR_PAGERDUTY_API_KEY>"
+    service_id: "<YOUR_PAGERDUTY_SERVICE_ID>"
+    urgency_rules:
+      - type: "high"
+        threshold:
+          error_rate: 0.1
+          response_time: 10000  # milliseconds
+      - type: "low"
+        threshold:
+          error_rate: 0.05
+          response_time: 5000  # milliseconds
+
+# Security
+security:
+  input_validation:
+    enabled: true
+    max_input_length: 4096  # characters
+    allowed_tags: ["p", "br", "ul", "ol", "li", "code"]
+  output_filtering:
+    enabled: true
+    prohibited_content:
+      - "sensitive_data"
+      - "explicit_content"
+    content_policy: "https://example.com/content-policy"
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 60
+    burst: 10
+  authentication:
+    method: "api_key"  # Options: api_key, oauth2, jwt
+    oauth2:
+      authorize_url: "https://example.com/oauth2/authorize"
+      token_url: "https://example.com/oauth2/token"
+      client_id: "<YOUR_CLIENT_ID>"
+      client_secret: "<YOUR_CLIENT_SECRET>"
+  jwt:
+    enabled: true
+    secret_key: "<YOUR_JWT_SECRET_KEY>"
+    algorithm: "HS256"
+    expiration_time: 3600  # seconds
+    refresh_token:
+      enabled: true
+      expiration_time: 604800  # 7 days in seconds
+  two_factor_auth:
+    enabled: true
+    methods:
+      - "sms"
+      - "email"
+      - "authenticator_app"
+    issuer: "DevLM"
+    digits: 6
+    interval: 30  # seconds
+
+# Model versioning
+model_versioning:
+  enabled: true
+  default_version: "v1.3"
+  available_versions:
+    - "v1.2"
+    - "v1.3"
+    - "v1.4-beta"
+  auto_upgrade: false
+  upgrade_schedule:
+    - version: "v1.4"
+      date: "2023-12-01"
+
+# Performance tuning
+performance:
+  batch_processing:
+    enabled: true
+    max_batch_size: 10
+    optimal_batch_size: 5
+  request_timeout: 30  # seconds
+  connection_pooling:
+    enabled: true
+    max_connections: 100
+    max_idle_connections: 20
+    connection_lifetime: 300  # seconds
+  concurrent_requests: 20
+  adaptive_concurrency:
+    enabled: true
+    initial_limit: 20
+    min_limit: 10
+    max_limit: 100
+    increase_threshold: 0.6  # CPU utilization
+    decrease_threshold: 0.4  # CPU utilization
+    adjustment_step: 5
+    adjustment_interval: 60  # seconds
+
+# Fallback configuration
+fallback:
+  enabled: true
+  backup_model: "gpt-3.5-turbo"
+  backup_api:
+    endpoint: "https://api.openai.com/v1/chat/completions"
+    key: "<YOUR_OPENAI_API_KEY>"
+
+# Fine-tuning configuration
+fine_tuning:
+  enabled: false
+  dataset_path: "/path/to/fine_tuning_dataset.jsonl"
+  base_model: "claude-v1.3"
+  hyperparameters:
+    learning_rate: 1e-5
+    epochs: 3
+    batch_size: 4
+
+# Cost management
+cost_management:
+  budget_limit:
+    daily: 100  # USD
+    monthly: 3000  # USD
+  alert_threshold:
+    daily: 80  # percentage
+    monthly: 90  # percentage
+  cost_optimization:
+    enabled: true
+    prefer_cached_responses: true
+    dynamic_max_tokens: true
+
+# Compliance
+compliance:
+  data_retention:
+    enabled: true
+    retention_period: 30  # days
+  audit_logging:
+    enabled: true
+    log_path: "/var/log/llm_audit.log"
+  gdpr:
+    enabled: true
+    data_processing_agreement: "https://example.com/dpa"
+
+# Internationalization
+i18n:
+  default_language: "en"
+  supported_languages:
+    - "en"
+    - "es"
+    - "fr"
+    - "de"
+    - "ja"
+  translation_service:
+    enabled: true
+    api_key: "<YOUR_TRANSLATION_API_KEY>"
+
+# Webhook notifications
+webhooks:
+  enabled: true
+  endpoints:
+    - name: "error_notification"
+      url: "https://example.com/webhook/error"
+      events: ["error", "rate_limit_exceeded"]
+    - name: "usage_report"
+      url: "https://example.com/webhook/usage"
+      events: ["daily_usage_report"]
+
+# Custom functions
+custom_functions:
+  enabled: true
+  functions:
+    - name: "get_current_weather"
+      description: "Get the current weather for a given location"
+      parameters:
+        location:
+          type: "string"
+          description: "The city and state, e.g. San Francisco, CA"
+      endpoint: "https://api.weather.com/current"
+    - name: "get_stock_price"
+      description: "Get the current stock price for a given symbol"
+      parameters:
+        symbol:
+          type: "string"
+          description: "The stock symbol, e.g. AAPL"
+      endpoint: "https://api.stock.com/price"
+
+# Auto-scaling configuration
+auto_scaling:
+  enabled: true
+  min_instances: 1
+  max_instances: 10
+  scale_up_threshold: 0.8  # CPU utilization
+  scale_down_threshold: 0.2  # CPU utilization
+  cooldown_period: 300  # seconds
+  cpu_threshold:
+    enabled: true
+    min: 0.2
+    max: 0.8
+    step: 0.1
+    check_interval: 300  # seconds
+
+# Model evaluation
+model_evaluation:
+  enabled: true
+  test_set_path: "/path/to/test_set.jsonl"
+  metrics:
+    - "accuracy"
+    - "perplexity"
+    - "latency"
+  evaluation_frequency: "weekly"
+
+# Continuous learning
+continuous_learning:
+  enabled: true
+  data_collection:
+    enabled: true
+    storage_path: "/path/to/collected_data"
+  retraining:
+    frequency: "monthly"
+    min_new_samples: 1000
+
+# API versioning
+api_versioning:
+  enabled: true
+  current_version: "v1"
+  supported_versions:
+    - "v1"
+    - "v2-beta"
+  deprecation:
+    - version: "v1"
+      date: "2024-06-30"
+
+# Prompt library
+prompt_library:
+  enabled: true
+  prompts:
+    - name: "bug_fix"
+      content: "You are a software developer. Fix the following bug in the code:"
+    - name: "code_optimization"
+      content: "You are a performance expert. Optimize the following code for better efficiency:"
+
+# Token usage tracking
+token_usage:
+  enabled: true
+  tracking_interval: 3600  # seconds
+  alert_threshold: 1000000  # tokens per day
+  cost_per_token: 0.000002  # USD
+
+# Backup and disaster recovery
+backup_recovery:
+  enabled: true
+  backup_frequency: "daily"
+  backup_retention: 30  # days
+  disaster_recovery_plan: "https://example.com/dr-plan"
+  incremental_backup:
+    enabled: true
+    full_backup_interval: 604800  # 7 days in seconds
+    incremental_interval: 86400  # 1 day in seconds
+    compression: true
+    encryption:
+      enabled: true
+      algorithm: "AES-256-GCM"
+
+# Thread management
+thread_management:
+  enabled: true
+  max_thread_lifetime: 86400  # seconds (24 hours)
+  cleanup_interval: 3600  # seconds
+
+# Response formatting
+response_formatting:
+  enabled: true
+  default_format: "markdown"
+  supported_formats:
+    - "markdown"
+    - "html"
+    - "plain_text"
+
+# Ethical AI
+ethical_ai:
+  enabled: true
+  bias_detection:
+    enabled: true
+    threshold: 0.7
+  content_filtering:
+    enabled: true
+    prohibited_topics:
+      - "violence"
+      - "hate_speech"
+  transparency:
+    enabled: true
+    explanation_level: "detailed"  # Options: basic, detailed, technical
+
+# File system operations
+file_system:
+  versioning:
+    enabled: true
+    max_versions: 5
+    storage_path: "/path/to/versioned_files"
+  encryption:
+    enabled: true
+    algorithm: "AES-256-GCM"
+    key_rotation:
+      enabled: true
+      interval: 2592000  # 30 days in seconds
+
+# External services
+external_services:
+  github:
+    api_url: "https://api.github.com"
+    client_id: "<YOUR_GITHUB_CLIENT_ID>"
+    client_secret: "<YOUR_GITHUB_CLIENT_SECRET>"
+  gitlab:
+    api_url: "https://gitlab.com/api/v4"
+    access_token: "<YOUR_GITLAB_ACCESS_TOKEN>"
+  bitbucket:
+    api_url: "https://api.bitbucket.org/2.0"
+    oauth2:
+      client_id: "<YOUR_BITBUCKET_CLIENT_ID>"
+      client_secret: "<YOUR_BITBUCKET_CLIENT_SECRET>"
+
+# Email notifications
+notifications:
+  email:
+    templates:
+      enabled: true
+      template_dir: "/path/to/email_templates"
+      default_language: "en"
+      supported_languages:
+        - "en"
+        - "es"
+        - "fr"
+      variables:
+        - "user_name"
+        - "action_url"
+        - "support_email"
+    smtp:
+      host: "smtp.example.com"
+      port: 587
+      username: "<YOUR_SMTP_USERNAME>"
+      password: "<YOUR_SMTP_PASSWORD>"
+      use_tls: true
+    sender

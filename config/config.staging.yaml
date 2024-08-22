@@ -1,0 +1,521 @@
+```yaml
+# Database Configuration
+database:
+  host: "staging-db-host"
+  port: 5432
+  name: "devlm_staging"
+  user: "staging_user"
+  password: "staging_password"
+  max_connections: 50
+  connection_timeout: 30
+  idle_timeout: 300
+  ssl_mode: "require"
+  pool_size: 10
+  max_retries: 3
+  connection_pooling:
+    enabled: true
+    min_size: 5
+    max_size: 20
+  read_replica:
+    enabled: true
+    host: "staging-db-read-replica"
+    port: 5432
+  schema_migration:
+    auto_apply: true
+    version_table: "schema_version"
+  secure_credential_storage:
+    enabled: true
+    provider: "vault"
+    path: "secret/staging/database"
+  query_logging:
+    enabled: true
+    log_slow_queries: true
+    slow_query_threshold: 1000  # milliseconds
+
+# Redis Configuration
+redis:
+  host: "staging-redis-host"
+  port: 6379
+  password: "staging_redis_password"
+  pool_size: 20
+  min_idle_connections: 5
+  max_retries: 3
+  idle_timeout: 240
+  sentinel:
+    enabled: true
+    master_name: "mymaster"
+    nodes:
+      - "sentinel1:26379"
+      - "sentinel2:26379"
+      - "sentinel3:26379"
+  automatic_failover:
+    enabled: true
+    timeout: 5
+  ssl:
+    enabled: true
+    cert_file: "/path/to/redis/cert.pem"
+    key_file: "/path/to/redis/key.pem"
+    ca_file: "/path/to/redis/ca.pem"
+  cluster:
+    enabled: false
+    nodes:
+      - "redis-node1:6379"
+      - "redis-node2:6379"
+      - "redis-node3:6379"
+  pub_sub:
+    channels:
+      - "notifications"
+      - "cache_invalidation"
+  key_prefix: "devlm_staging:"
+  data_persistence:
+    enabled: true
+    strategy: "rdb"
+    interval: 3600  # seconds
+
+# LLM API Configuration
+llm_api:
+  key: "staging_llm_api_key"
+  url: "https://staging-llm-api.example.com"
+  timeout: 30
+  max_retries: 3
+  providers:
+    - name: "openai"
+      priority: 1
+      key_rotation:
+        enabled: true
+        interval: 86400  # 24 hours
+    - name: "anthropic"
+      priority: 2
+      key_rotation:
+        enabled: true
+        interval: 86400  # 24 hours
+  load_balancing:
+    strategy: "round_robin"
+  key_rotation:
+    enabled: true
+    interval: 43200  # 12 hours
+    storage: "vault"
+  fallback_strategy:
+    enabled: true
+    max_attempts: 3
+    delay_between_attempts: 5
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 100
+    burst: 20
+  caching:
+    enabled: true
+    ttl: 3600  # 1 hour
+  monitoring:
+    enabled: true
+    metrics:
+      - "response_time"
+      - "error_rate"
+      - "token_usage"
+  request_logging:
+    enabled: true
+    exclude_fields:
+      - "api_key"
+      - "sensitive_data"
+
+# Search API Configuration
+search_api:
+  key: "staging_search_api_key"
+  url: "https://staging-search-api.example.com"
+  providers:
+    - "google"
+    - "bing"
+  timeout: 10
+  max_results: 50
+  cache:
+    enabled: true
+    ttl: 3600  # 1 hour
+  fallback:
+    enabled: true
+    strategy: "next_provider"
+  result_filtering:
+    enabled: true
+    min_relevance_score: 0.7
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 50
+    burst: 10
+  custom_search_engine:
+    enabled: false
+    id: "staging_custom_search_engine_id"
+  adult_content_filter:
+    enabled: true
+    level: "moderate"
+  geolocation:
+    enabled: true
+    default_country: "US"
+  result_diversity:
+    enabled: true
+    min_domain_variety: 3
+
+# Code Execution Configuration
+code_execution:
+  sandbox_image: "devlm/sandbox:staging"
+  max_execution_time: 60
+  max_memory: 512
+  cpu_limit: "0.5"
+  network_access: false
+  allowed_syscalls:
+    - "read"
+    - "write"
+    - "exit"
+  resource_monitoring:
+    enabled: true
+    interval: 5  # seconds
+  alert_threshold:
+    cpu_usage: 90  # percent
+    memory_usage: 80  # percent
+  logging:
+    enabled: true
+    level: "info"
+  cleanup:
+    enabled: true
+    interval: 300  # 5 minutes
+  sandbox_pool:
+    enabled: true
+    min_size: 2
+    max_size: 10
+  language_support:
+    python: true
+    javascript: true
+    ruby: false
+    go: false
+  output_streaming:
+    enabled: true
+    chunk_size: 1024  # bytes
+  dependency_management:
+    enabled: true
+    allowed_sources:
+      - "pypi"
+      - "npm"
+    max_dependencies: 10
+
+# API Gateway Configuration
+api_gateway:
+  port: 8080
+  secret_key: "staging_secret_key"
+  rate_limit:
+    requests_per_minute: 100
+    burst: 20
+  timeout: 30
+  cors:
+    allowed_origins:
+      - "https://staging.devlm.example.com"
+      - "http://localhost:3000"
+    allowed_methods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+  request_validation:
+    enabled: true
+  versioning:
+    enabled: true
+    default_version: "v1"
+  documentation:
+    enabled: true
+    type: "swagger"
+    url: "/api/docs"
+  ssl:
+    enabled: true
+    cert_file: "/path/to/api_gateway/cert.pem"
+    key_file: "/path/to/api_gateway/key.pem"
+  circuit_breaker:
+    enabled: true
+    threshold: 5
+    timeout: 30
+  authentication:
+    jwt:
+      enabled: true
+      secret: "staging_jwt_secret"
+      expiration: 3600  # seconds
+  caching:
+    enabled: true
+    ttl: 300  # seconds
+  compression:
+    enabled: true
+    level: 6  # 1-9, higher is more compression
+  request_id:
+    enabled: true
+    header_name: "X-Request-ID"
+  health_check:
+    enabled: true
+    endpoint: "/health"
+    interval: 60  # seconds
+
+# Logging Configuration
+logging:
+  level: "debug"
+  file_path: "/var/log/devlm/staging.log"
+  rotation:
+    max_size: 100
+    max_backups: 5
+    max_age: 30
+  format: "json"
+  output:
+    - "file"
+    - "console"
+  aggregation:
+    enabled: true
+    service: "elasticsearch"
+    host: "staging-elk-host"
+    port: 9200
+  parsing:
+    enabled: true
+    rules:
+      - pattern: "ERROR"
+        action: "alert"
+  log_shipping:
+    enabled: true
+    destination: "logstash:5044"
+  sensitive_data:
+    masking:
+      enabled: true
+      fields:
+        - "password"
+        - "api_key"
+  correlation:
+    enabled: true
+    header: "X-Correlation-ID"
+  metrics:
+    enabled: true
+    type: "prometheus"
+    endpoint: "/metrics"
+  structured_logging:
+    enabled: true
+    additional_fields:
+      environment: "staging"
+      application: "devlm"
+
+# File System Configuration
+file_system:
+  project_root: "/opt/devlm/staging"
+  temp_directory: "/tmp/devlm_staging"
+  max_file_size: 10485760  # 10MB
+  allowed_extensions:
+    - ".py"
+    - ".js"
+    - ".txt"
+  integrity_check:
+    enabled: true
+    interval: 3600  # 1 hour
+  cleanup:
+    enabled: true
+    interval: 86400  # 24 hours
+    max_age: 604800  # 7 days
+  encryption:
+    enabled: true
+    algorithm: "AES-256"
+    key_storage: "vault"
+  versioning:
+    enabled: true
+    max_versions: 5
+  compression:
+    enabled: true
+    algorithm: "gzip"
+    min_size: 1024  # 1KB
+  backup:
+    enabled: true
+    interval: 86400  # 24 hours
+    retention: 30  # days
+  access_control:
+    enabled: true
+    default_permission: "640"
+  quota:
+    enabled: true
+    max_usage: 1073741824  # 1GB
+  file_locking:
+    enabled: true
+    timeout: 30  # seconds
+
+# Security Configuration
+security:
+  allowed_origins:
+    - "https://staging.devlm.example.com"
+    - "http://localhost:3000"
+  ssl:
+    enabled: true
+    cert_file: "/etc/ssl/certs/devlm_staging.crt"
+    key_file: "/etc/ssl/private/devlm_staging.key"
+  jwt:
+    secret: "staging_jwt_secret"
+    expiration: 3600
+  ip_whitelist:
+    enabled: true
+    allowed_ips:
+      - "192.168.1.0/24"
+      - "10.0.0.0/8"
+  rate_limiting:
+    per_user:
+      requests_per_minute: 50
+      burst: 10
+  two_factor_auth:
+    enabled: true
+    type: "totp"
+  password_policy:
+    min_length: 12
+    require_uppercase: true
+    require_lowercase: true
+    require_numbers: true
+    require_special_chars: true
+  session_management:
+    max_active_sessions: 5
+    session_timeout: 1800  # 30 minutes
+  content_security_policy:
+    enabled: true
+    policy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+  api_key_management:
+    rotation_interval: 2592000  # 30 days
+    max_active_keys: 3
+  brute_force_protection:
+    enabled: true
+    max_attempts: 5
+    lockout_duration: 900  # 15 minutes
+  secure_headers:
+    enabled: true
+    headers:
+      - "X-Frame-Options: DENY"
+      - "X-XSS-Protection: 1; mode=block"
+      - "X-Content-Type-Options: nosniff"
+
+# Performance Configuration
+performance:
+  max_concurrent_tasks: 10
+  cache_ttl: 300
+  database_connection_pool: 20
+  worker_processes: 4
+  adaptive_concurrency:
+    enabled: true
+    min_workers: 2
+    max_workers: 8
+    scale_factor: 0.5
+  auto_scaling:
+    enabled: true
+    metric: "cpu_usage"
+    target_value: 70
+    cooldown_period: 300
+  request_timeout: 30
+  connection_timeout: 10
+  read_timeout: 20
+  write_timeout: 20
+  keep_alive_timeout: 120
+  query_optimization:
+    enabled: true
+    max_execution_time: 5000  # milliseconds
+  async_processing:
+    enabled: true
+    queue_size: 1000
+  load_balancing:
+    enabled: true
+    algorithm: "least_connections"
+  caching_strategy:
+    enabled: true
+    levels:
+      - "memory"
+      - "redis"
+  lazy_loading:
+    enabled: true
+    threshold: 100  # items
+
+# Feature Flags Configuration
+feature_flags:
+  enable_web_search: true
+  enable_code_execution: true
+  enable_file_operations: true
+  enable_advanced_analytics: false
+  management:
+    remote_updates: true
+    update_interval: 300  # 5 minutes
+  local_fallback:
+    enabled: true
+    file_path: "/opt/devlm/staging/feature_flags.json"
+  caching:
+    enabled: true
+    ttl: 600  # 10 minutes
+  overrides:
+    enabled: true
+    file_path: "/opt/devlm/staging/feature_flag_overrides.json"
+  default_values:
+    new_features: false
+  targeting:
+    enabled: true
+    rules_file: "/opt/devlm/staging/feature_flag_targeting.json"
+  audit_logging:
+    enabled: true
+    log_file: "/var/log/devlm/feature_flags.log"
+  rollout_strategy:
+    enabled: true
+    strategy: "percentage"
+    percentage: 50
+
+# Monitoring Configuration
+monitoring:
+  prometheus_port: 9090
+  metrics_endpoint: "/metrics"
+  health_check_endpoint: "/health"
+  custom_metrics:
+    - name: "llm_api_calls_total"
+      type: "counter"
+      description: "Total number of LLM API calls"
+  alerting:
+    enabled: true
+    provider: "pagerduty"
+    service_key: "staging_pagerduty_service_key"
+  dashboard:
+    auto_generate: true
+    update_interval: 3600
+  tracing:
+    enabled: true
+    provider: "jaeger"
+    sampling_rate: 0.1
+  log_correlation:
+    enabled: true
+    header_name: "X-Correlation-ID"
+  system_metrics:
+    cpu_usage: true
+    memory_usage: true
+    disk_usage: true
+    network_io: true
+  custom_dashboards:
+    - name: "API Performance"
+      metrics:
+        - "request_duration"
+        - "error_rate"
+        - "throughput"
+  anomaly_detection:
+    enabled: true
+    algorithm: "moving_average"
+    threshold: 2.0  # standard deviations
+  uptime_monitoring:
+    enabled: true
+    interval: 60  # seconds
+    timeout: 5  # seconds
+
+# LLM Instances Configuration
+llm_instances:
+  - name: "staging-instance-1"
+    model: "gpt-3.5-turbo"
+    max_tokens: 2000
+    temperature: 0.7
+  - name: "staging-instance-2"
+    model: "gpt-3.5-turbo"
+    max_tokens: 2000
+    temperature: 0.5
+  scaling:
+    enabled: true
+    min_instances: 1
+    max_instances: 5
+    scale_up_threshold: 80  # percent
+    scale_down_threshold: 20  # percent
+  load_balancing:
+    strategy: "least_connections"
+  instance_health_check:
+    enabled: true
+    interval: 60  # seconds
+    timeout: 5  # seconds
+  warm_up:

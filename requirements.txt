@@ -1,0 +1,324 @@
+# DevLM Python Dependencies
+
+# Core dependencies
+fastapi==0.103.2
+uvicorn==0.23.2
+pydantic==2.4.2
+asyncpg==0.28.0
+aioredis==2.0.1
+httpx==0.25.0
+python-dotenv==1.0.0
+
+# AI/ML dependencies
+transformers==4.34.0
+torch==2.0.1
+numpy==1.26.0
+
+# Testing and development
+pytest==7.4.2
+pytest-asyncio==0.21.1
+black==23.9.1
+isort==5.12.0
+flake8==6.1.0
+
+# Monitoring and logging
+prometheus-client==0.17.1
+structlog==23.1.0
+
+# Additional dependencies
+sqlalchemy==2.0.21
+alembic==1.12.0
+aiohttp==3.8.5
+psycopg2-binary==2.9.7
+pyjwt==2.8.0
+cryptography==41.0.4
+markupsafe==2.1.3
+jinja2==3.1.2
+
+# Development dependencies
+pytest-cov==4.1.0
+mypy==1.5.1
+bandit==1.7.5
+safety==2.3.5
+
+# Code quality and linting
+pylint==2.17.5
+pycodestyle==2.11.0
+pydocstyle==6.3.0
+
+# API documentation
+swagger-ui-bundle==0.0.9
+openapi-spec-validator==0.6.0
+
+# Performance profiling
+py-spy==0.3.14
+
+# Dependency management
+pip-tools==7.3.0
+
+# Async support
+asyncio==3.4.3
+aiofiles==23.2.1
+
+# Data manipulation
+pandas==2.1.1
+polars==0.19.3
+
+# Caching
+cachetools==5.3.1
+
+# Environment management
+python-decouple==3.8
+
+# Claude API client
+anthropic==0.3.11
+
+# Web scraping
+beautifulsoup4==4.12.2
+selenium==4.14.0
+
+# Natural Language Processing
+spacy==3.6.1
+
+# Vector database
+faiss-cpu==1.7.4
+
+# Serialization
+msgpack==1.0.7
+
+# Parallel processing
+joblib==1.3.2
+
+# Progress bars
+tqdm==4.66.1
+
+# Code execution
+docker==6.1.3
+
+# Fuzzy matching
+fuzzywuzzy==0.18.0
+
+# Graph processing
+networkx==3.1
+
+# Visualization
+matplotlib==3.8.0
+seaborn==0.13.0
+
+# Time handling
+pytz==2023.3.post1
+python-dateutil==2.8.2
+
+# Configuration management
+configparser==6.0.0
+
+# Templating
+mako==1.2.4
+
+# Compression
+zstandard==0.21.0
+
+# Human-readable data serialization
+toml==0.10.2
+
+# Data validation
+cerberus==1.3.5
+
+# Regular expressions
+regex==2023.10.3
+
+# Code formatting
+yapf==0.40.2
+
+# Type checking
+typeguard==4.1.5
+
+# Distributed task queue
+celery==5.3.4
+
+# WebSocket support
+websockets==11.0.3
+
+# GraphQL support
+graphene==3.3
+
+# Dependency injection
+dependency-injector==4.41.0
+
+# Mocking for tests
+mock==5.1.0
+
+# HTTP/2 support
+h2==4.1.0
+
+# Command-line interface creation
+click==8.1.7
+
+# Internationalization and localization
+babel==2.13.0
+
+# Parsing
+pyparsing==3.1.1
+
+# Email handling
+email-validator==2.0.0
+
+# Rate limiting
+limits==3.6.0
+
+# Cron jobs
+apscheduler==3.10.4
+
+# Feature flagging
+flagsmith==3.2.0
+
+# Profiling
+pyinstrument==4.5.3
+
+# Code coverage
+coverage==7.3.2
+
+# Fuzzing
+atheris==2.3.0
+
+# Performance testing
+locust==2.16.1
+
+# Continuous profiling
+pyroscope-io==0.8.4
+
+# Debugging
+ipdb==0.13.13
+
+# Memory profiling
+memory-profiler==0.61.0
+
+# Tracing
+opentelemetry-api==1.20.0
+opentelemetry-sdk==1.20.0
+
+# Chaos engineering
+chaostoolkit==1.15.0
+
+# A/B testing
+scipy==1.11.3
+
+# Semantic versioning
+semver==3.0.1
+
+# Code complexity analysis
+radon==6.0.1
+
+# Documentation generation
+sphinx==7.2.6
+
+# Benchmarking
+pytest-benchmark==4.0.0
+
+# Data anonymization
+faker==19.6.2
+
+# Fuzzy text matching
+python-Levenshtein==0.22.0
+
+# Containerization
+docker-compose==1.29.2
+
+# Infrastructure as Code
+ansible==8.4.0
+
+# Continuous Integration
+pre-commit==3.4.0
+
+# Continuous Deployment
+fabric==3.1.0
+
+# Secrets management
+hvac==1.2.1
+
+# Load testing
+locust==2.16.1
+
+# API mocking
+responses==0.23.3
+
+# Code review
+pylint-gitlab==1.2.0
+
+# Vulnerability scanning
+safety==2.3.5
+
+# Dependency resolution
+poetry==1.6.1
+
+# Automated dependency updates
+pyup-bot==0.1.4
+
+# TODO: Replace <YOUR_PROJECT_NAME> with the actual project name
+# TODO: Replace <YOUR_CONTACT_EMAIL> with the maintainer's email address
+[metadata]
+name = <YOUR_PROJECT_NAME>
+version = 0.1.0
+description = DevLM: AI-powered software development assistant
+long_description = file: README.md
+long_description_content_type = text/markdown
+url = https://github.com/Nero7991/devlm
+author = Your Name
+author_email = <YOUR_CONTACT_EMAIL>
+license = MIT
+classifiers =
+    Development Status :: 3 - Alpha
+    Intended Audience :: Developers
+    License :: OSI Approved :: MIT License
+    Programming Language :: Python :: 3
+    Programming Language :: Python :: 3.9
+    Programming Language :: Python :: 3.10
+
+[options]
+packages = find:
+python_requires = >=3.9
+include_package_data = True
+
+[options.entry_points]
+console_scripts =
+    devlm = devlm.cli:main
+
+[tool:pytest]
+testpaths = tests
+addopts = --cov=devlm --cov-report=term-missing
+
+[flake8]
+max-line-length = 120
+exclude = .git,__pycache__,docs/source/conf.py,old,build,dist
+
+[mypy]
+ignore_missing_imports = True
+strict_optional = True
+
+[isort]
+profile = black
+multi_line_output = 3
+
+[coverage:run]
+source = devlm
+
+[tox:tox]
+envlist = py39, py310, flake8, mypy
+isolated_build = true
+
+[gh-actions]
+python =
+    3.9: py39
+    3.10: py310, flake8, mypy
+
+[testenv]
+deps = pytest
+commands = pytest
+
+[testenv:flake8]
+deps = flake8
+commands = flake8 devlm tests
+
+[testenv:mypy]
+deps = mypy
+commands = mypy devlm
