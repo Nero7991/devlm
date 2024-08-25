@@ -13,6 +13,11 @@ import shutil
 import time
 from functools import wraps
 import copy
+import sys
+from datetime import datetime
+import shlex
+import signal
+
 try:
     import anthropic
     from anthropic import AnthropicVertex
@@ -163,7 +168,7 @@ class VertexAILLM(LLMInterface):
         self.region = region
         self.client = AnthropicVertex(region=region, project_id=project_id)
         self.max_retries = 5
-        self.retry_delay = 1  # Start with 1 second delay
+        self.retry_delay = 32  # Start with 1 second delay
 
     def generate_response(self, prompt: str, max_tokens: int) -> str:
         messages = [{"role": "user", "content": prompt}]
@@ -180,7 +185,9 @@ class VertexAILLM(LLMInterface):
                 if attempt < self.max_retries - 1:
                     print(f"Error occurred: {str(e)}. Retrying in {self.retry_delay} seconds...")
                     time.sleep(self.retry_delay)
-                    self.retry_delay *= 2  # Exponential backoff
+                    if self.retry_delay < 128:
+                        self.retry_delay *= 2  # Exponential backoff
+                
                 else:
                     print(f"Max retries reached. Error: {str(e)}")
                     user_input = input("Do you want to try again? (yes/no): ").lower()
@@ -399,18 +406,26 @@ def initialize_technical_brief(structure):
             "directories": {}
         }
         for name, content in items.items():
-            if isinstance(content, str):  # It's a file
-                if name != "bootstrap.py":
-                    dir_entry["files"].append({"name": name, "functions": [], "status": "not_started"})
-            elif isinstance(content, dict):  # It's a directory
+            if isinstance(content, list):  # It's a list of files
+                for file in content:
+                    if file not in ["bootstrap.py", "project_structure.json", "project_summary.md"]:
+                        dir_entry["files"].append({"name": file, "functions": [], "status": "not_started"})
+            elif isinstance(content, dict):  # It's a subdirectory
                 dir_entry["directories"][name] = process_directory(content)
         return dir_entry
 
     brief["directories"] = process_directory(structure)
-    
+
+    # Handle root-level files
+    if "" in structure:
+        for file in structure[""]:
+            if file not in ["bootstrap.py", "project_structure.json", "project_summary.md"]:
+                brief["directories"].setdefault("files", []).append({"name": file, "functions": [], "status": "not_started"})
+
     with open(TECHNICAL_BRIEF_FILE, 'w') as f:
         json.dump(brief, f, indent=4)
-    
+
+    save_technical_brief(brief)
     return brief
 
 def check_progress(structure):
@@ -447,7 +462,7 @@ def check_progress(structure):
     
     return brief
 
-def update_technical_brief(file_path, content, iteration):
+def update_technical_brief(file_path, content, iteration, mode="generate", test_info=None):
     with open(TECHNICAL_BRIEF_FILE, 'r') as f:
         brief = json.load(f)
     
@@ -457,10 +472,8 @@ def update_technical_brief(file_path, content, iteration):
         file_entry = {"name": os.path.basename(file_path), "functions": [], "status": "not_started"}
         update_file_entry(brief["directories"], file_path, file_entry)
 
-    # Store the original file entry for comparison
-    original_file_entry = copy.deepcopy(file_entry)
-
-    prompt = f"""Based on the following file content, please generate a complete and valid JSON object for the technical brief of the file {os.path.basename(file_path)}. The brief should include a summary of the file's purpose and a list of functions with their inputs, outputs, and a brief summary. Also, include a "todo" field for each function if there's anything that needs to be completed or improved.
+    if mode == "generate":
+        prompt = f"""Based on the following file content, please generate a complete and valid JSON object for the technical brief of the file {os.path.basename(file_path)}. The brief should include a summary of the file's purpose and a list of functions with their inputs, outputs, and a brief summary. Also, include a "todo" field for each function if there's anything that needs to be completed or improved.
 
 File content:
 {content}
@@ -486,60 +499,60 @@ Output format:
 Important: Ensure that the JSON is complete, properly formatted, and enclosed in triple backticks. Do not include any text outside the JSON object.
 """
 
-    try:
-        response_text = llm_client.generate_response(prompt, 4000)
-        
-        json_match = re.search(r'```(?:json)?\n([\s\S]*?)\n```', response_text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            json_str = response_text
-
         try:
-            brief_content = json.loads(json_str)
-        except json.JSONDecodeError:
-            brief_content = json5_load(StringIO(json_str))
-
-        file_entry.update(brief_content)
-        file_entry["last_updated_iteration"] = iteration
-        
-        def is_todo_empty(todo):
-            if not todo:
-                return True
-            todo_lower = str(todo).lower().strip()
-            return todo_lower in ['', 'none', 'n/a', 'na', 'null']
-
-        # Update the status based on the presence of non-empty todos
-        if any(not is_todo_empty(func.get("todo")) for func in file_entry["functions"]):
-            file_entry["status"] = "in_progress"
-        else:
-            file_entry["status"] = "done"
-
-        # Update root directory summary if this is a root-level file
-        if len(file_path.split(os.sep)) == 1:
-            update_root_directory_summary(brief)
-        else:
-            # Update directory summary for non-root files
-            update_directory_summary(brief, os.path.dirname(file_path))
-
-        # Compare the updated file entry with the original
-        if file_entry != original_file_entry:
-            print(f"File entry for {os.path.basename(file_path)} has been updated:")
+            response_text = llm_client.generate_response(prompt, 4000)
             
-        else:
-            print(f"Warning: File entry for {os.path.basename(file_path)} remained unchanged after update.")
+            json_match = re.search(r'```(?:json)?\n([\s\S]*?)\n```', response_text)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                json_str = response_text
 
-    except Exception as e:
-        print(f"Error updating technical brief for {file_path}: {str(e)}")
-        file_entry.update({
-            "name": os.path.basename(file_path),
-            "summary": f"Error generating technical brief for {os.path.basename(file_path)}",
-            "functions": [],
-            "status": "error",
-            "last_updated_iteration": iteration
-        })
+            try:
+                brief_content = json.loads(json_str)
+            except json.JSONDecodeError:
+                brief_content = json5_load(StringIO(json_str))
 
-    # Save the updated brief immediately after updating a file
+            file_entry.update(brief_content)
+            file_entry["last_updated_iteration"] = iteration
+            
+            def is_todo_empty(todo):
+                if not todo:
+                    return True
+                todo_lower = str(todo).lower().strip()
+                return todo_lower in ['', 'none', 'n/a', 'na', 'null']
+
+            if any(not is_todo_empty(func.get("todo")) for func in file_entry["functions"]):
+                file_entry["status"] = "in_progress"
+            else:
+                file_entry["status"] = "done"
+
+        except Exception as e:
+            print(f"Error updating technical brief for {file_path}: {str(e)}")
+            file_entry.update({
+                "name": os.path.basename(file_path),
+                "summary": f"Error generating technical brief for {os.path.basename(file_path)}",
+                "functions": [],
+                "status": "error",
+                "last_updated_iteration": iteration
+            })
+
+    elif mode == "test":
+        if test_info:
+            if "test_status" not in file_entry:
+                file_entry["test_status"] = []
+            file_entry["test_status"].append({
+                "timestamp": datetime.now().isoformat(),
+                "info": test_info
+            })
+        file_entry["last_updated_iteration"] = iteration
+        file_entry["status"] = "tested"
+
+    if len(file_path.split(os.sep)) == 1:
+        update_root_directory_summary(brief)
+    else:
+        update_directory_summary(brief, os.path.dirname(file_path))
+
     save_technical_brief(brief)
 
     return brief
@@ -620,7 +633,10 @@ Technical Brief:
 Previous Content:
 {previous_content}
 
-Please provide the complete content for the file {file_path}, addressing any todos and improving the code as needed. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
+Project Structure:
+{json.dumps(get_project_structure(), indent=2)}
+
+Please provide the complete content for the file {file_path}, addressing any todos and improving the code as needed. Remember to correctly reference other packages, import in other files. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
 
 For configuration files, please use placeholder values that the user can easily identify and replace later.
 """
@@ -628,15 +644,20 @@ For configuration files, please use placeholder values that the user can easily 
     try:
         response_text = llm_client.generate_response(prompt, 4000)
         
-        # Check if the response starts with a code block
-        if response_text.strip().startswith("```"):
-            # Extract code from the code block
-            code_match = re.search(r'```(?:\w+)?\n([\s\S]*?)\n```', response_text)
-            if code_match:
-                return code_match.group(1).strip()
+        # # Check if the response starts with a code block
+        # if response_text.strip().startswith("```"):
+        #     # Extract code from the code block
+        #     code_match = re.search(r'```(?:\w+)?\n([\s\S]*?)\n```', response_text)
+        #     if code_match:
+        #         return code_match.group(1).strip()
         
-        # If no code block is found, return the entire response
-        return response_text.strip()
+        # # If no code block is found, return the entire response
+        # return response_text.strip()
+
+        # Extract code from the response
+        code_content = extract_code(response_text, file_path)
+        
+        return code_content
     except Exception as e:
         print(f"Error generating content for {file_path}: {str(e)}")
         return None
@@ -657,25 +678,133 @@ def read_project_structure():
     with open('project_structure.json', 'r') as f:
         return json.load(f)
 
+def inspect_file_with_approval(file_path):
+    project_root = os.getcwd()  # Get the current working directory (project root)
+    
+    if not os.path.abspath(file_path).startswith(project_root):
+        print(f"Warning: Attempting to access file outside project directory: {file_path}")
+        approval = input("Do you approve this action? (yes/no): ").lower().strip()
+        if approval != 'yes':
+            print("Action not approved. Skipping file inspection.")
+            return None
+    
+    try:
+        if os.path.exists(file_path):
+            if os.path.isfile(file_path):
+                with open(file_path, 'rb') as f:
+                    content = f.read(1024)  # Read first 1024 bytes
+                if content.startswith(b'\x7fELF'):
+                    return "This appears to be a binary executable file."
+                else:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        return f.read()
+            elif os.path.isdir(file_path):
+                return f"This is a directory. Contents: {os.listdir(file_path)}"
+        else:
+            return f"File or directory not found: {file_path}"
+    except Exception as e:
+        return f"Error inspecting file: {str(e)}"
+
 ALLOWED_COMMANDS = [
-    'python',
+    'python3',
     'go run',
     'go test',
     'docker build',
     'docker run',
-    'pip install',
+    'pip3 install',
     'go mod tidy',
     # Add more commands as needed
 ]
 
+APPROVAL_REQUIRED_COMMANDS = [
+    'curl',
+    'wget',
+    'sudo apt install',
+    './',
+]
+
 import subprocess
 
+def require_approval(command):
+    print(f"The following command requires your approval:")
+    print(command)
+    approval = input("Do you approve this command? (yes/no): ").lower().strip()
+    return approval == 'yes'
+
+def wait_for_user():
+    print(f"Some error occurred. Please resolve the issue and press Enter to continue.")
+    input()
+    return True
+
+TEST_PROGRESS_FILE = "test_progress.json"
+
+def load_test_progress():
+    if os.path.exists(TEST_PROGRESS_FILE):
+        with open(TEST_PROGRESS_FILE, 'r') as f:
+            return json.load(f)
+    return {"completed_tests": [], "current_step": None}
+
+def save_test_progress(progress):
+    with open(TEST_PROGRESS_FILE, 'w') as f:
+        json.dump(progress, f, indent=2)
+
+def update_test_progress(completed_test=None, current_step=None):
+    progress = load_test_progress()
+    if completed_test:
+        progress["completed_tests"].append(completed_test)
+    if current_step:
+        progress["current_step"] = current_step
+    save_test_progress(progress)
+
 def execute_command(command):
+    if any(command.startswith(cmd) for cmd in APPROVAL_REQUIRED_COMMANDS):
+        if not require_approval(command):
+            return "Command not approved by user.", False
+
     try:
-        result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        return e.output
+        process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        stdout, stderr = process.communicate()
+        return_code = process.returncode
+        
+        if return_code != 0:
+            return f"Error (code {return_code}):\n{stderr.strip()}", False
+        else:
+            return stdout.strip(), True
+    except FileNotFoundError:
+        return f"Error: Command '{command.split()[0]}' not found.", False
+    except Exception as e:
+        return f"Error executing command: {str(e)}", False
+
+def check_environment(command):
+    print("Checking environment...")
+    
+    # Check current directory
+    current_dir = os.getcwd()
+    print(f"Current directory: {current_dir}")
+    
+    # Check if we're in the project root (you might want to adjust this check)
+    if not os.path.exists("go.mod"):
+        print("Warning: go.mod not found. We might not be in the project root.")
+    
+    # Check command installation
+    cmd = command.split()[0]  # Get the main command (e.g., 'go' from 'go test ./...')
+    version_flag = "--version"
+    if cmd == "python" or cmd == "python3":
+        version_flag = "-V"
+    # if cmd has "go" in it, then we are checking the version of go
+    if "go" in cmd:
+        version_flag = "version"
+    
+    version_command = f"{cmd} {version_flag}"
+    output, success = execute_command(version_command)
+    if success:
+        print(f"{cmd.capitalize()} version: {output}")
+        return success, "success"
+    else:
+        print(f"Error: {output}")
+        return success, output
+
+    
 
 def modify_file(file_path, content):
     with open(file_path, 'w') as f:
@@ -685,51 +814,329 @@ def read_file(file_path):
     with open(file_path, 'r') as f:
         return f.read()
 
+def load_technical_brief():
+    if os.path.exists(TECHNICAL_BRIEF_FILE):
+        with open(TECHNICAL_BRIEF_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def get_file_technical_brief(technical_brief, file_path):
+    def search_directories(directories, path_parts):
+        if not path_parts:
+            return None
+        
+        current_dir = path_parts[0]
+        
+        if current_dir in directories:
+            if len(path_parts) == 1:
+                for file in directories[current_dir].get("files", []):
+                    if file["name"] == current_dir:
+                        return file
+            else:
+                result = search_directories(directories[current_dir].get("directories", {}), path_parts[1:])
+                if result is None:
+                    for file in directories[current_dir].get("files", []):
+                        if file["name"] == path_parts[-1]:
+                            return file
+                return result
+        
+        return None
+
+    path_parts = file_path.split(os.sep)
+    
+    result = search_directories(technical_brief["directories"]["directories"], path_parts)
+    
+    if result is None:
+        for file in technical_brief["directories"].get("files", []):
+            if file["name"] == path_parts[-1]:
+                return file
+    
+    return result
+
+COMMAND_HISTORY_FILE = "command_history.json"
+
+def save_command_history(command_history):
+    with open(COMMAND_HISTORY_FILE, 'w') as f:
+        json.dump(command_history, f, indent=2)
+
+def load_command_history():
+    if os.path.exists(COMMAND_HISTORY_FILE):
+        with open(COMMAND_HISTORY_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+def extract_code(response_text, file_path):
+    # Print the response text (for debugging)  
+    print(f"Response text:\n{response_text}")
+
+    # Check if the response contains a code block
+    code_match = re.search(r'```(?:\w+)?\n([\s\S]*?)\n```', response_text)
+    if code_match:
+        return code_match.group(1).strip()
+    
+    # If no code block is found, attempt to extract based on file extension
+    file_extension = os.path.splitext(file_path)[1].lower()
+    
+    if file_extension in ['.py', '.go', '.js', '.java', '.c', '.cpp', '.h', '.hpp']:
+        # For programming language files, try to extract everything after the first line
+        # that doesn't start with a common prefix like "Here's", "This is", etc.
+        lines = response_text.split('\n')
+        for i, line in enumerate(lines):
+            if not line.strip().lower().startswith(('here', 'this', 'the', 'updated')):
+                return '\n'.join(lines[i:]).strip()
+        # If we couldn't find a good starting point, return the entire response
+        return response_text.strip()
+    elif file_extension in ['.json', '.yaml', '.yml', '.toml', '.ini', '.cfg']:
+        # For configuration files, attempt to parse and format the content
+        try:
+            if file_extension == '.json':
+                # Try to find JSON content
+                json_match = re.search(r'\{[\s\S]*\}', response_text)
+                if json_match:
+                    parsed = json.loads(json_match.group(0))
+                    return json.dumps(parsed, indent=2)
+            elif file_extension in ['.yaml', '.yml']:
+                import yaml
+                # Try to find YAML content
+                yaml_match = re.search(r'(?:^|\n)(\w+:[\s\S]*)', response_text)
+                if yaml_match:
+                    parsed = yaml.safe_load(yaml_match.group(1))
+                    return yaml.dump(parsed, default_flow_style=False)
+            elif file_extension == '.toml':
+                import toml
+                # Try to find TOML content
+                toml_match = re.search(r'(?:^|\n)(\w+\s*=[\s\S]*)', response_text)
+                if toml_match:
+                    parsed = toml.loads(toml_match.group(1))
+                    return toml.dumps(parsed)
+            # For other config files or if parsing fails, return as is
+            return response_text.strip()
+        except:
+            # If parsing fails, return the response as is
+            return response_text.strip()
+    else:
+        # For other file types, return the response as is
+        return response_text.strip()
+
+
 def test_and_debug_mode(llm_client):
+    with open('project_summary.md', 'r') as f:
+        project_summary = f.read()
+
+    technical_brief = load_technical_brief()
+    directory_summaries = technical_brief.get("directory_summaries", {})
     project_structure = read_project_structure()
+    test_progress = load_test_progress()
+    command_history = load_command_history()
+    
+    print("Entering test and debug mode...")
+    print(f"Completed tests: {test_progress['completed_tests']}")
+    print(f"Current step: {test_progress['current_step']}")
+    print(f"Command history: {json.dumps(command_history, indent=2)}")
+
+    iteration = len(command_history) + 1
+
+    def handle_interrupt(signum, frame):
+        print("\nCtrl+C pressed. You can type 'exit' to quit or provide a suggestion.")
+        user_input = input("Your input (exit/suggestion): ").strip()
+        if user_input.lower() == 'exit':
+            print("Exiting the program.")
+            sys.exit(0)
+        else:
+            command_entry = {
+                "iteration": iteration,
+                "action": "USER_SUGGESTION",
+                "reason": "User interrupt",
+                "suggestion": user_input
+            }
+            command_history.append(command_entry)
+            save_command_history(command_history)
+            print("Suggestion added to command history. Continuing with the program.")
+
+    # Set up the signal handler
+    signal.signal(signal.SIGINT, handle_interrupt)
+
     while True:
         prompt = f"""
-        Based on the following project structure, suggest a test to run or a file to inspect:
+        You are in test and debug mode for the project.
+
+        Project Summary:
+        {project_summary}
+
+        Directory Summaries:
+        {json.dumps(directory_summaries, indent=2)}
+
+        Project Structure:
         {json.dumps(project_structure, indent=2)}
 
-        You can use the following commands: {', '.join(ALLOWED_COMMANDS)}
-        
-        If you want to inspect a file, reply with "INSPECT: <file_path>".
-        If you want to modify a file, reply with "MODIFY: <file_path>".
-        If you're done testing, reply with "DONE".
+        Command History:
+        {json.dumps(command_history, indent=2)}
 
-        What would you like to do?
+        Based on this information and your previous actions, suggest the next step to complete the project. Use the existing project structure and avoid creating new files unless absolutely necessary. If the previous caused an error, fix it. We want to start with some initial functionality and keep testing until all is tested. You can:
+        1. Run a test using one of these commands: {', '.join(ALLOWED_COMMANDS)}
+        2. Run a command that requires approval: {', '.join(APPROVAL_REQUIRED_COMMANDS)}
+        3. Inspect a file in the project structure by replying with "INSPECT: <file_path>"
+        4. Rewrite a file in the project structure by replying with "REWRITE: <file_path>"
+        5. Ask the user for help by replying with "HELP: <your question>". Do this when you see that no progress is being made.
+        6. Finish testing by replying with "DONE"
+
+        Provide your response in the following format:
+        ACTION: <your chosen action>
+        REASON: <brief explanation for your choice (max 25 words)>
+
+        What would you like to do next to progress towards project completion?
         """
         
-        response = llm_client.generate_response(prompt, 2000)
-        
-        if response.startswith("INSPECT:"):
-            file_path = response.split(":")[1].strip()
-            file_content = read_file(file_path)
-            print(f"Content of {file_path}:\n{file_content}")
-        
-        elif response.startswith("MODIFY:"):
-            file_path = response.split(":")[1].strip()
-            current_content = read_file(file_path)
-            modification_prompt = f"""
-            Current content of {file_path}:
-            {current_content}
+        print(f"\nGenerating next step (Iteration {iteration})...")
+        response = llm_client.generate_response(prompt, 4000)
+        print(f"LLM response:\n{response}")
 
-            Please provide the updated content for this file:
-            """
-            new_content = llm_client.generate_response(modification_prompt, 4000)
-            modify_file(file_path, new_content)
-            print(f"Updated {file_path}")
-        
-        elif response.lower() == "done":
-            break
-        
+        # Parse the response
+        action_match = re.search(r'ACTION:\s*(.*)', response)
+        reason_match = re.search(r'REASON:\s*(.*)', response)
+
+        if action_match:
+            action = action_match.group(1).strip()
+            reason = reason_match.group(1).strip() if reason_match else "No reason provided"
+            command_entry = {"iteration": iteration, "action": action, "reason": reason}
+            save_command_history(command_history)
+            if action.upper().startswith("HELP:"):
+                question = action.split(":")[1].strip()
+                print(f"\nAsking for help with the question: {question}")
+                user_response = input("Please provide your response to the model's question: ")        
+                command_entry["user"] = user_response
+
+            if action.upper().startswith("INSPECT:"):
+                file_path = action.split(":")[1].strip()
+                try:
+                    file_content = read_file(file_path)
+                    file_brief = get_file_technical_brief(technical_brief, file_path)
+                    if file_brief is None:
+                        print(f"Warning: No technical brief found for {file_path}")
+                        file_brief = {"name": os.path.basename(file_path), "summary": "No summary available"}
+                    
+                    print(f"\nInspecting file: {file_path}")
+                    
+                    analysis_prompt = f"""
+                    {prompt}
+
+                    You requested to inspect the file {file_path}.
+
+                    You gave this reason: {reason}
+
+                    File path: {file_path}
+                    File content:
+                    {file_content}
+
+                    Technical brief:
+                    {json.dumps(file_brief, indent=2)}
+
+                    Respond to yourself in 50 words or less. This is for the result section of this command. If no improvements are needed, state that the file is ready for testing.:
+                    """
+                    analysis = llm_client.generate_response(analysis_prompt, 2000)
+                    print(f"File analysis:\n{analysis}")
+                    
+                    technical_brief = update_technical_brief(file_path, file_content, iteration, mode="test", test_info=analysis)
+                    update_test_progress(current_step=f"Inspected {file_path}")
+                    
+                    command_entry["result"] = {"analysis": analysis}
+                except FileNotFoundError:
+                    error_msg = f"Error: File not found: {file_path}"
+                    print(error_msg)
+                    command_entry["error"] = error_msg
+                    wait_for_user()
+                except Exception as e:
+                    error_msg = f"Error inspecting file {file_path}: {str(e)}"
+                    print(error_msg)
+                    command_entry["error"] = error_msg
+                    wait_for_user()
+
+            elif action.upper().startswith("REWRITE:"):
+                file_path = action.split(":")[1].strip()
+                current_content = read_file(file_path)
+                file_brief = get_file_technical_brief(technical_brief, file_path)
+                modification_prompt = f"""
+                {prompt}
+
+                You requested to rewrite the file {file_path}.
+
+                You gave this reason: {reason}
+
+                Please provide the updated content for this file, addressing any issues or improvements needed. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
+                """
+                new_content = llm_client.generate_response(modification_prompt, 4000)
+                
+                extracted_content = extract_code(new_content, file_path)
+                
+                modify_file(file_path, extracted_content)
+                print(f"\nModified {file_path}")
+                
+                changes_prompt = f"""
+                Summarize the changes made to the file {file_path}. Compare the original content:
+                {current_content}
+
+                With the new content:
+                {extracted_content}
+
+                This is for the result section of this command. Provide a brief summary of the modifications in 50 words or less:
+                """
+                changes_summary = llm_client.generate_response(changes_prompt, 1000)
+                print(f"Changes summary:\n{changes_summary}")
+                
+                technical_brief = update_technical_brief(file_path, extracted_content, iteration, mode="test", test_info=changes_summary)
+                update_test_progress(current_step=f"Modified {file_path}")
+                
+                command_entry["result"] = {"changes_summary": changes_summary}
+
+            elif action.upper() == "DONE":
+                print("\nTest and debug mode completed.")
+                command_entry["result"] = "Test and debug mode completed."
+                break
+
+            elif any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS):
+                env_check, env_output = check_environment(action)
+                if env_check:
+                    print(f"\nExecuting command: {action}")
+                    output, success = execute_command(action)
+                    print(f"Command output:\n{output}")
+                    update_test_progress(completed_test=action, current_step=f"Executed {action}")
+                    
+                    analysis_prompt = f"""
+                    {prompt}
+
+                    You requested to run this command: {action}.
+
+                    You gave this reason: {reason}
+
+                    Output:
+                    {output}
+
+                    Execution {'succeeded' if success else 'failed'}
+
+                    This is for the result section of this command. Respond based on the command execution in 100 words or less (lesser the better):
+                    """
+                    analysis = llm_client.generate_response(analysis_prompt, 1000)
+                    print(f"Command analysis:\n{analysis}")
+                    # Only add the command output if the length is less than 250 characters
+                    if len(output) < 250:
+                        command_entry["output"] = output
+                    command_entry["success"] = success
+                    command_entry["analysis"] = analysis
+                else:
+                    error_msg = f"Environment check failed. Cannot execute command: {action}"
+                    print(error_msg)
+                    command_entry["error"] = f"{env_output}"
+                    command_entry["result"] = {"error": error_msg, "env_output": env_output}
+                    wait_for_user()
+            
+            command_history.append(command_entry)
+            save_command_history(command_history)
         else:
-            if any(cmd in response for cmd in ALLOWED_COMMANDS):
-                output = execute_command(response)
-                print(f"Command output:\n{output}")
-            else:
-                print("Invalid command or action.")
+            print("Invalid response format. Please provide an action.")
+
+        test_progress = load_test_progress()
+        iteration += 1
+        save_command_history(command_history)
 
 def find_file_entry(directories, file_path):
     path_parts = file_path.split(os.sep)
@@ -822,8 +1229,9 @@ def generate():
 
     collect_files(technical_brief["directories"])
     
-    current_iteration = min(file.get("last_updated_iteration", 0) for file in all_files)
-    max_iterations = 5
+    iterations = [file.get("last_updated_iteration", 0) for file in all_files]
+    current_iteration = min(iterations) if iterations else 0
+    max_iterations = 2
     all_done = False
 
     # List of files to preserve and not regenerate
