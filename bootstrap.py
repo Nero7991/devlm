@@ -17,6 +17,11 @@ import sys
 from datetime import datetime
 import shlex
 import signal
+import subprocess
+import threading
+import queue
+import atexit
+from typing import Optional
 
 try:
     import anthropic
@@ -163,12 +168,13 @@ class AnthropicLLM(LLMInterface):
 
 
 class VertexAILLM(LLMInterface):
-    def __init__(self, project_id, region):
+    def __init__(self, project_id: str, region: str, model: Optional[str] = None):
         self.project_id = project_id
         self.region = region
         self.client = AnthropicVertex(region=region, project_id=project_id)
         self.max_retries = 5
-        self.retry_delay = 32  # Start with 1 second delay
+        self.retry_delay = 32  # Start with 32 seconds delay
+        self.model = model or "claude-3-5-sonnet@20240620"  # Default model
 
     def generate_response(self, prompt: str, max_tokens: int) -> str:
         messages = [{"role": "user", "content": prompt}]
@@ -176,7 +182,7 @@ class VertexAILLM(LLMInterface):
         for attempt in range(self.max_retries):
             try:
                 response = self.client.messages.create(
-                    model="claude-3-5-sonnet@20240620",
+                    model=self.model,
                     max_tokens=max_tokens,
                     messages=messages
                 )
@@ -185,32 +191,35 @@ class VertexAILLM(LLMInterface):
                 if attempt < self.max_retries - 1:
                     print(f"Error occurred: {str(e)}. Retrying in {self.retry_delay} seconds...")
                     time.sleep(self.retry_delay)
-                    if self.retry_delay < 128:
+                    if self.retry_delay < 64:
                         self.retry_delay *= 2  # Exponential backoff
-                
                 else:
                     print(f"Max retries reached. Error: {str(e)}")
                     user_input = input("Do you want to try again? (yes/no): ").lower()
                     if user_input == 'yes':
-                        self.retry_delay = 1  # Reset delay
+                        self.retry_delay = 32  # Reset delay
                         continue
                     else:
                         raise
 
         raise Exception("Failed to generate response after multiple attempts")
 
+    def switch_model(self, new_model: str):
+        self.model = new_model
+        print(f"Switched to model: {self.model}")
+
     def _handle_error(self, error_type, error_message):
         print(f"Vertex AI error: {error_type} - {error_message}")
         return False
 
-def get_llm_client(provider: str = "anthropic") -> LLMInterface:
+def get_llm_client(provider: str = "anthropic", model: Optional[str] = None) -> LLMInterface:
     if provider == "anthropic":
         return AnthropicLLM(anthropic.Anthropic(api_key=API_KEY))
     elif provider == "vertex_ai":
         # Replace with your actual Google Cloud project ID and region
-        project_id = "gen-lang-client-0101555698"
+        project_id = "devlm-434202"
         region = "us-east5"
-        return VertexAILLM(project_id, region)
+        return VertexAILLM(project_id, region, model)
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
@@ -397,7 +406,10 @@ def initialize_technical_brief(structure):
     brief = {
         "project": "LLM-based Software Developer Project",
         "directory_summaries": {},
-        "directories": {}
+        "directories": {
+            "files": [],
+            "directories": {}
+        }
     }
 
     def process_directory(items):
@@ -405,22 +417,32 @@ def initialize_technical_brief(structure):
             "files": [],
             "directories": {}
         }
-        for name, content in items.items():
-            if isinstance(content, list):  # It's a list of files
-                for file in content:
-                    if file not in ["bootstrap.py", "project_structure.json", "project_summary.md"]:
-                        dir_entry["files"].append({"name": file, "functions": [], "status": "not_started"})
-            elif isinstance(content, dict):  # It's a subdirectory
-                dir_entry["directories"][name] = process_directory(content)
+        if isinstance(items, list):
+            for file in items:
+                if file not in ["bootstrap.py", "project_structure.json", "project_summary.md"]:
+                    dir_entry["files"].append({"name": file, "functions": [], "status": "not_started"})
+        elif isinstance(items, dict):
+            for name, content in items.items():
+                if isinstance(content, list):  # It's a list of files
+                    sub_dir = {
+                        "files": [],
+                        "directories": {}
+                    }
+                    for file in content:
+                        if file not in ["bootstrap.py", "project_structure.json", "project_summary.md"]:
+                            sub_dir["files"].append({"name": file, "functions": [], "status": "not_started"})
+                    dir_entry["directories"][name] = sub_dir
+                elif isinstance(content, dict):  # It's a subdirectory
+                    dir_entry["directories"][name] = process_directory(content)
         return dir_entry
 
-    brief["directories"] = process_directory(structure)
-
-    # Handle root-level files
-    if "" in structure:
-        for file in structure[""]:
-            if file not in ["bootstrap.py", "project_structure.json", "project_summary.md"]:
-                brief["directories"].setdefault("files", []).append({"name": file, "functions": [], "status": "not_started"})
+    for name, content in structure.items():
+        if name == "":  # Root-level files
+            for file in content:
+                if file not in ["bootstrap.py", "project_structure.json", "project_summary.md"]:
+                    brief["directories"]["files"].append({"name": file, "functions": [], "status": "not_started"})
+        else:
+            brief["directories"]["directories"][name] = process_directory(content)
 
     with open(TECHNICAL_BRIEF_FILE, 'w') as f:
         json.dump(brief, f, indent=4)
@@ -636,7 +658,7 @@ Previous Content:
 Project Structure:
 {json.dumps(get_project_structure(), indent=2)}
 
-Please provide the complete content for the file {file_path}, addressing any todos and improving the code as needed. Remember to correctly reference other packages, import in other files. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
+Please provide the complete content for the file {file_path}, addressing any todos and improving the code as needed. Remember to correctly reference other packages, imports. Your output should be valid content for that file type, without any explanations or comments outside the content itself. If you need to include any explanations, please do so as comments within the code. Remember that you are directly writing to the file.
 
 For configuration files, please use placeholder values that the user can easily identify and replace later.
 """
@@ -655,7 +677,7 @@ For configuration files, please use placeholder values that the user can easily 
         # return response_text.strip()
 
         # Extract code from the response
-        code_content = extract_code(response_text, file_path)
+        code_content = extract_content(response_text, file_path)
         
         return code_content
     except Exception as e:
@@ -721,6 +743,8 @@ APPROVAL_REQUIRED_COMMANDS = [
     'wget',
     'sudo apt install',
     './',
+    # Add a raw command that requires approval
+    'raw: <raw_command>'
 ]
 
 import subprocess
@@ -756,24 +780,132 @@ def update_test_progress(completed_test=None, current_step=None):
         progress["current_step"] = current_step
     save_test_progress(progress)
 
+running_processes = []
+
+def check_all_processes():
+    global running_processes
+    for process_info in running_processes[:]:  # Iterate over a copy of the list
+        process = process_info["process"]
+        if process.poll() is not None:
+            print(f"Process '{process_info['cmd']}' has terminated.")
+            running_processes.remove(process_info)
+
+def get_running_processes_info():
+    return [{"cmd": p["cmd"]} for p in running_processes]
+
+def kill_all_processes():
+    for process_info in running_processes:
+        try:
+            process_info["process"].kill()
+            print(f"Terminated process: {process_info['cmd']}")
+        except Exception as e:
+            print(f"Error terminating process {process_info['cmd']}: {str(e)}")
+    running_processes.clear()
+
+atexit.register(kill_all_processes)
+
+def run_continuous_process(command):
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    output_queue = queue.Queue()
+    
+    def enqueue_output(out, queue):
+        for line in iter(out.readline, ''):
+            queue.put(line)
+        out.close()
+    
+    threading.Thread(target=enqueue_output, args=(process.stdout, output_queue), daemon=True).start()
+    threading.Thread(target=enqueue_output, args=(process.stderr, output_queue), daemon=True).start()
+    
+    running_processes.append({"cmd": command, "process": process, "queue": output_queue})
+    
+    # Wait for 30 seconds and collect initial output
+    time.sleep(30)
+    initial_output = ""
+    while not output_queue.empty():
+        initial_output += output_queue.get_nowait()
+    
+    return initial_output
+
+def check_process_output(command):
+    for process_info in running_processes:
+        if process_info["cmd"] == command:
+            process = process_info["process"]
+            output_queue = process_info["queue"]
+            
+            if process.poll() is not None:
+                running_processes.remove(process_info)
+                return f"Process '{command}' has terminated."
+            
+            output = ""
+            while not output_queue.empty():
+                output += output_queue.get_nowait()
+            
+            return output if output else "No new output since last check."
+    
+    return f"No running process found for command: {command}"
+
+def restart_process(command):
+    global running_processes
+    for process_info in running_processes:
+        if process_info['cmd'] == command:
+            try:
+                process_info['process'].terminate()
+                process_info['process'].wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process_info['process'].kill()
+            running_processes.remove(process_info)
+            break
+
 def execute_command(command):
-    if any(command.startswith(cmd) for cmd in APPROVAL_REQUIRED_COMMANDS):
-        if not require_approval(command):
+    if command.upper().startswith("INDEF:"):
+        cmd = command.split(":", 1)[1].strip()
+        output = run_continuous_process(cmd)
+        return f"Started continuous process: {cmd}\nInitial output:\n{output}", True
+    elif command.upper().startswith("CHECK:"):
+        cmd = command.split(":", 1)[1].strip()
+        output = check_process_output(cmd)
+        return output, True
+    # Check if it's a raw command
+    elif command.startswith("raw:"):
+        raw_command = command[4:].strip()  # Remove 'raw:' prefix and trim whitespace
+        if not require_approval(raw_command):
             return "Command not approved by user.", False
 
-    try:
-        process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr = process.communicate()
-        return_code = process.returncode
-        
-        if return_code != 0:
-            return f"Error (code {return_code}):\n{stderr.strip()}", False
-        else:
-            return stdout.strip(), True
-    except FileNotFoundError:
-        return f"Error: Command '{command.split()[0]}' not found.", False
-    except Exception as e:
-        return f"Error executing command: {str(e)}", False
+        try:
+            process = subprocess.Popen(raw_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            stdout, stderr = process.communicate()
+            return_code = process.returncode
+
+            full_output = f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+
+            if return_code != 0:
+                return f"Error (code {return_code}):\n{full_output}", False
+            else:
+                return full_output.strip(), True
+        except Exception as e:
+            return f"Error executing raw command: {str(e)}", False
+    else:
+        # Check if the command requires approval
+        if any(command.startswith(cmd) for cmd in APPROVAL_REQUIRED_COMMANDS):
+            if not require_approval(command):
+                return "Command not approved by user.", False
+
+        # Existing logic for non-raw commands
+        try:
+            process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            stdout, stderr = process.communicate()
+            return_code = process.returncode
+
+            full_output = f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+
+            if return_code != 0:
+                return f"Error (code {return_code}):\n{full_output}", False
+            else:
+                return full_output.strip(), True
+        except FileNotFoundError:
+            return f"Error: Command '{command.split()[0]}' not found.", False
+        except Exception as e:
+            return f"Error executing command: {str(e)}", False
 
 def check_environment(command):
     print("Checking environment...")
@@ -865,59 +997,53 @@ def load_command_history():
             return json.load(f)
     return []
 
-def extract_code(response_text, file_path):
+def extract_content(response_text, file_path):
     # Print the response text (for debugging)  
-    print(f"Response text:\n{response_text}")
+    print(f"Response text for {file_path}:\n{response_text}")
 
-    # Check if the response contains a code block
-    code_match = re.search(r'```(?:\w+)?\n([\s\S]*?)\n```', response_text)
-    if code_match:
-        return code_match.group(1).strip()
-    
-    # If no code block is found, attempt to extract based on file extension
     file_extension = os.path.splitext(file_path)[1].lower()
-    
-    if file_extension in ['.py', '.go', '.js', '.java', '.c', '.cpp', '.h', '.hpp']:
-        # For programming language files, try to extract everything after the first line
-        # that doesn't start with a common prefix like "Here's", "This is", etc.
-        lines = response_text.split('\n')
-        for i, line in enumerate(lines):
-            if not line.strip().lower().startswith(('here', 'this', 'the', 'updated')):
-                return '\n'.join(lines[i:]).strip()
-        # If we couldn't find a good starting point, return the entire response
-        return response_text.strip()
-    elif file_extension in ['.json', '.yaml', '.yml', '.toml', '.ini', '.cfg']:
-        # For configuration files, attempt to parse and format the content
-        try:
-            if file_extension == '.json':
-                # Try to find JSON content
-                json_match = re.search(r'\{[\s\S]*\}', response_text)
-                if json_match:
-                    parsed = json.loads(json_match.group(0))
-                    return json.dumps(parsed, indent=2)
-            elif file_extension in ['.yaml', '.yml']:
-                import yaml
-                # Try to find YAML content
-                yaml_match = re.search(r'(?:^|\n)(\w+:[\s\S]*)', response_text)
-                if yaml_match:
-                    parsed = yaml.safe_load(yaml_match.group(1))
-                    return yaml.dump(parsed, default_flow_style=False)
-            elif file_extension == '.toml':
-                import toml
-                # Try to find TOML content
-                toml_match = re.search(r'(?:^|\n)(\w+\s*=[\s\S]*)', response_text)
-                if toml_match:
-                    parsed = toml.loads(toml_match.group(1))
-                    return toml.dumps(parsed)
-            # For other config files or if parsing fails, return as is
+
+    # File extensions where the LLM might respond with a code block
+    code_block_extensions = [
+        '.py', '.go', '.js', '.java', '.c', '.cpp', '.h', '.hpp', '.sh',
+        '.html', '.css', '.sql', '.Dockerfile', '.makefile'
+    ]
+
+    # File extensions for plain text files
+    plain_text_extensions = [
+        '.md', '.txt', '.yml', '.yaml', '.ini', '.cfg', '.conf',
+        '.gitignore', '.env', '.properties', '.log'
+    ]
+
+    if file_extension in code_block_extensions:
+        # Check if the response contains a code block
+        code_match = re.search(r'```(?:\w+)?\n([\s\S]*?)\n```', response_text)
+        if code_match:
+            return code_match.group(1).strip()
+        else:
+            # If no code block is found, return the entire response
             return response_text.strip()
-        except:
+    
+    elif file_extension in plain_text_extensions or not file_extension:
+        # For plain text files or files without extension, return the entire response
+        return response_text.strip()
+
+    elif file_extension == '.json':
+        # For JSON files, attempt to parse and format the content
+        try:
+            parsed = json.loads(response_text)
+            return json.dumps(parsed, indent=2)
+        except json.JSONDecodeError:
             # If parsing fails, return the response as is
             return response_text.strip()
+
     else:
-        # For other file types, return the response as is
+        # For any unknown file types, log a warning and return the response as is
+        print(f"Warning: Unknown file extension '{file_extension}' for file '{file_path}'. Treating as plain text.")
         return response_text.strip()
 
+def get_last_10_iterations(command_history):
+    return command_history[-10:] if len(command_history) > 10 else command_history
 
 def test_and_debug_mode(llm_client):
     with open('project_summary.md', 'r') as f:
@@ -940,6 +1066,7 @@ def test_and_debug_mode(llm_client):
         print("\nCtrl+C pressed. You can type 'exit' to quit or provide a suggestion.")
         user_input = input("Your input (exit/suggestion): ").strip()
         if user_input.lower() == 'exit':
+            kill_all_processes()
             print("Exiting the program.")
             sys.exit(0)
         else:
@@ -956,7 +1083,11 @@ def test_and_debug_mode(llm_client):
     # Set up the signal handler
     signal.signal(signal.SIGINT, handle_interrupt)
 
+    retry_with_expert = False
+
     while True:
+        last_10_iterations = get_last_10_iterations(command_history)
+
         prompt = f"""
         You are in test and debug mode for the project.
 
@@ -969,26 +1100,45 @@ def test_and_debug_mode(llm_client):
         Project Structure:
         {json.dumps(project_structure, indent=2)}
 
-        Command History:
-        {json.dumps(command_history, indent=2)}
+        Command History (last 10 commands):
+        {json.dumps(last_10_iterations, indent=2)}
 
-        Based on this information and your previous actions, suggest the next step to complete the project. Use the existing project structure and avoid creating new files unless absolutely necessary. If the previous caused an error, fix it. We want to start with some initial functionality and keep testing until all is tested. You can:
-        1. Run a test using one of these commands: {', '.join(ALLOWED_COMMANDS)}
-        2. Run a command that requires approval: {', '.join(APPROVAL_REQUIRED_COMMANDS)}
-        3. Inspect a file in the project structure by replying with "INSPECT: <file_path>"
-        4. Rewrite a file in the project structure by replying with "REWRITE: <file_path>"
-        5. Ask the user for help by replying with "HELP: <your question>". Do this when you see that no progress is being made.
-        6. Finish testing by replying with "DONE"
+        Based on this information and your previous actions, suggest the next step to complete the project. Use the existing project structure and avoid creating new files unless absolutely necessary. If the previous action caused an error, fix it. We want to start with some initial functionality and keep testing until all is tested. If you notice that you're stuck on a problem, step back and take an overall view to figure out the issue. Make effort to determine the correct command for each type of action. Carefully read the instructions for each action. You can:
+        1. Run a test using one of these commands (IMPORTANT: DO NOT USE for test/commands that might run indefinitely such as "go run <some server>", use 3 instead): "RUN: {', '.join(ALLOWED_COMMANDS)}"
+        2. Run a command that requires approval (IMPORTANT: DO NOT USE for test/commands that might run indefinitely, use 3 instead): "RUN: {', '.join(APPROVAL_REQUIRED_COMMANDS)}"
+        3. Run a test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} (IMPORTANT: Use this for commands/tests that run indefinitely such as a server (example: go run <some server>) and not for commands that end eventually (unless they are very long)) with "INDEF: <command>"
+        4. Check the output current running process using "CHECK: <command>"
+        5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..."
+        6. (Preferred over 7 due to better cross file context) Inspect multiple files (maximum 4) and rewrite one (one of the files that being inspected only) by replying with "MULTI: <file_path>, <file_path>, ...; WRITE: <file_path>"
+        7. Inspect and rewrite a file in the project structure (cannot create a new file) by replying with "REWRITE: <file_path>" 
+        8. Ask the user for help by replying with "HELP: <your question>". Do this when you see that no progress is being made.
+        9. Restart a running process with "RESTART: <command>"
+        10. Finish testing by replying with "DONE"
+
+        """
+
+        if running_processes:
+            prompt_prcoesses = f"""
+            Currently Running Processes:
+            {json.dumps([{'cmd': p['cmd']} for p in running_processes], indent=2)}
+            """
+
+        prompt_extension = f"""
 
         Provide your response in the following format:
         ACTION: <your chosen action>
-        REASON: <brief explanation for your choice (max 25 words)>
+        REASON: <brief explanation for your choice (max 80 words)>
 
         What would you like to do next to progress towards project completion?
         """
+
+        if running_processes:
+            final_prompt = prompt + prompt_prcoesses + prompt_extension
+        else:
+            final_prompt = prompt + prompt_extension
         
         print(f"\nGenerating next step (Iteration {iteration})...")
-        response = llm_client.generate_response(prompt, 4000)
+        response = llm_client.generate_response(final_prompt, 4000)
         print(f"LLM response:\n{response}")
 
         # Parse the response
@@ -1007,78 +1157,99 @@ def test_and_debug_mode(llm_client):
                 command_entry["user"] = user_response
 
             if action.upper().startswith("INSPECT:"):
-                file_path = action.split(":")[1].strip()
+                file_paths = action.split(":")[1].strip()
                 try:
-                    file_content = read_file(file_path)
-                    file_brief = get_file_technical_brief(technical_brief, file_path)
-                    if file_brief is None:
-                        print(f"Warning: No technical brief found for {file_path}")
-                        file_brief = {"name": os.path.basename(file_path), "summary": "No summary available"}
-                    
-                    print(f"\nInspecting file: {file_path}")
-                    
-                    analysis_prompt = f"""
+                    inspect_files = [f.strip() for f in file_paths.split(",")]
+                    file_contents = {}
+                    for file_path in inspect_files:
+                        if not os.path.exists(file_path):
+                            error_msg = f"Error: File not found: {file_path}"
+                            print(error_msg)
+                            file_contents[file_path] = error_msg
+                        else:
+                            file_contents[file_path] = read_file(file_path)
+
+                    inspection_prompt = f"""
                     {prompt}
 
-                    You requested to inspect the file {file_path}.
+                    You chose to inspect the following files: {', '.join(inspect_files)}
 
                     You gave this reason: {reason}
 
-                    File path: {file_path}
-                    File content:
-                    {file_content}
-
-                    Technical brief:
-                    {json.dumps(file_brief, indent=2)}
-
-                    Respond to yourself in 50 words or less. This is for the result section of this command. If no improvements are needed, state that the file is ready for testing.:
+                    Inspected files:
                     """
-                    analysis = llm_client.generate_response(analysis_prompt, 2000)
-                    print(f"File analysis:\n{analysis}")
-                    
-                    technical_brief = update_technical_brief(file_path, file_content, iteration, mode="test", test_info=analysis)
-                    update_test_progress(current_step=f"Inspected {file_path}")
-                    
+
+                    for file_path, content in file_contents.items():
+                        inspection_prompt += f"""
+                        File: {file_path}
+                        Content:
+                        {content}
+
+                        """
+
+                    inspection_prompt += """
+                    Respond to yourself in 50 words or less with the results of the inspection. This is for the result section of this command. If no improvements are needed, state that the files are ready for testing, or provide debug notes:
+                    """
+
+                    analysis = llm_client.generate_response(inspection_prompt, 4000)
+                    print(f"Files analysis:\n{analysis}")
+
+                    # for file_path, content in file_contents.items():
+                    #     if "Error: File not found" not in content:
+                    #         technical_brief = update_technical_brief(file_path, content, iteration, mode="test", test_info=analysis)
+
+                    update_test_progress(current_step=f"Inspected files: {', '.join(inspect_files)}")
                     command_entry["result"] = {"analysis": analysis}
-                except FileNotFoundError:
-                    error_msg = f"Error: File not found: {file_path}"
-                    print(error_msg)
-                    command_entry["error"] = error_msg
-                    wait_for_user()
+
                 except Exception as e:
-                    error_msg = f"Error inspecting file {file_path}: {str(e)}"
+                    error_msg = f"Error inspecting files: {str(e)}"
                     print(error_msg)
                     command_entry["error"] = error_msg
                     wait_for_user()
 
             elif action.upper().startswith("REWRITE:"):
                 file_path = action.split(":")[1].strip()
+                if not os.path.exists(file_path):
+                    error_msg = f"Error: File not found: {file_path}\n You cannot create a new file. Try to implement the functionality in an existing file in the project structure or ask user for help."
+                    command_entry["error"] = error_msg
+                    print("File not found. Provided LLM with the error message and suggestion.")
+                    continue
                 current_content = read_file(file_path)
                 file_brief = get_file_technical_brief(technical_brief, file_path)
                 modification_prompt = f"""
                 {prompt}
 
-                You requested to rewrite the file {file_path}.
+                You requested to inspect and rewrite the file {file_path}.
+
+                File content:
+                {current_content}
 
                 You gave this reason: {reason}
 
-                Please provide the updated content for this file, addressing any issues or improvements needed. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
+                Please provide the updated content for this file, addressing any issues or improvements needed based on your reason. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
                 """
-                new_content = llm_client.generate_response(modification_prompt, 4000)
-                
-                extracted_content = extract_code(new_content, file_path)
+                if retry_with_expert:
+                    new_content = llm_client.generate_response(modification_prompt, 4096)
+                else:
+                    new_content = llm_client.generate_response(modification_prompt, 8192)
+
+                extracted_content = extract_content(new_content, file_path)
                 
                 modify_file(file_path, extracted_content)
                 print(f"\nModified {file_path}")
                 
                 changes_prompt = f"""
+                You requested to inspect multiple files and rewrite one of them. You gave this reason: {reason}.
+
+                Command history (last 10 commands) for better context: {json.dumps(last_10_iterations, indent=2)}
+
                 Summarize the changes made to the file {file_path}. Compare the original content:
                 {current_content}
 
                 With the new content:
                 {extracted_content}
 
-                This is for the result section of this command. Provide a brief summary of the modifications in 50 words or less:
+                This is for the result section of this command. Provide a brief summary of the modifications in 50 words or less. If there are no changes, include "FILES ARE IDENTICAL" at the start, signify that the changes you were trying to make are already present, and that you possibly made a mistake in the inspection:
                 """
                 changes_summary = llm_client.generate_response(changes_prompt, 1000)
                 print(f"Changes summary:\n{changes_summary}")
@@ -1088,46 +1259,169 @@ def test_and_debug_mode(llm_client):
                 
                 command_entry["result"] = {"changes_summary": changes_summary}
 
+                # If change summary has "FILES ARE IDENTICAL", set retry_with_expert to True
+                # if "FILES ARE IDENTICAL" in changes_summary:
+                #     retry_with_expert = True
+                #     # Change model to expert
+                #     if isinstance(llm_client, VertexAILLM):
+                #         llm_client.switch_model("claude-3-opus@20240229")
+                #     continue
+
+            elif action.upper().startswith("MULTI:"):
+                parts = action.split(";")
+                inspect_files = [f.strip() for f in parts[0].split(":")[1].split(",")]
+                write_file = parts[1].split(":")[1].strip()
+
+                if write_file not in inspect_files:
+                    error_msg = f"Error: The file to be written ({write_file}) must be one of the inspected files."
+                    command_entry["error"] = error_msg
+                    print(error_msg)
+                    continue
+
+                file_contents = {}
+                for file_path in inspect_files:
+                    if not os.path.exists(file_path):
+                        error_msg = f"Error: File not found: {file_path}"
+                        file_contents[file_path] = error_msg
+                    else:
+                        file_contents[file_path] = read_file(file_path)
+
+                inspection_prompt = f"""
+                {prompt}
+
+                You chose to inspect multiple files and rewrite one of them.
+
+                Inspected files:
+                """
+
+                for file_path, content in file_contents.items():
+                    inspection_prompt += f"""
+                File: {file_path}
+                Content:
+                {content}
+
+                """
+
+                inspection_prompt += f"""
+                You will rewrite the file: {write_file}
+
+                You gave this reason: {reason}
+
+                Please provide the updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files. Use your reason for this action to address any issues. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
+                """
+                # If retry_with_expert is set, token = 4096, else 8192
+                if retry_with_expert:
+                    new_content = llm_client.generate_response(inspection_prompt, 4096)
+                else:
+                    new_content = llm_client.generate_response(inspection_prompt, 8192)
+
+                # new_content = llm_client.generate_response(inspection_prompt, )  # Increased token limit for multiple files
+                
+                extracted_content = extract_content(new_content, write_file)
+                
+                modify_file(write_file, extracted_content)
+                print(f"\nModified {write_file}")
+                
+                changes_prompt = f"""
+                You requested to inspect multiple files and rewrite one of them. You gave this reason: {reason}.
+
+                Command history (last 10 commands) for better context: {json.dumps(last_10_iterations, indent=2)}
+
+                Summarize the changes made to the file {write_file} for future notes to yourself. Compare the original content:
+                {file_contents[write_file]}
+
+                With the new content:
+                {extracted_content}
+
+                This is for the result section of this command. Provide a brief summary of the modifications in 50 words or less. If there are no changes, include "FILES ARE IDENTICAL" at the start, signify that the changes you were trying to make are already present, and that you possibly made a mistake in the inspection:
+                """
+                changes_summary = llm_client.generate_response(changes_prompt, 1000)
+                print(f"Changes summary:\n{changes_summary}")
+                
+                technical_brief = update_technical_brief(write_file, extracted_content, iteration, mode="test", test_info=changes_summary)
+                update_test_progress(current_step=f"Inspected multiple files and modified {write_file}")
+                
+                command_entry["result"] = {"changes_summary": changes_summary}
+
+                # If change summary has "FILES ARE IDENTICAL", set retry_with_expert to True
+                # if "FILES ARE IDENTICAL" in changes_summary:
+                #     retry_with_expert = True
+                #     # Change model to expert
+                #     if isinstance(llm_client, VertexAILLM):
+                #         llm_client.switch_model("claude-3-opus@20240229")
+                #     continue
+
             elif action.upper() == "DONE":
                 print("\nTest and debug mode completed.")
                 command_entry["result"] = "Test and debug mode completed."
                 break
 
-            elif any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS):
-                env_check, env_output = check_environment(action)
-                if env_check:
-                    print(f"\nExecuting command: {action}")
-                    output, success = execute_command(action)
-                    print(f"Command output:\n{output}")
-                    update_test_progress(completed_test=action, current_step=f"Executed {action}")
-                    
-                    analysis_prompt = f"""
-                    {prompt}
+            # Handle raw commands
+            if action.lower().startswith("raw:"):
+                print(f"\nExecuting raw command: {action}")
+                output, success = execute_command(action)
+                print(f"Command output:\n{output}")
+                update_test_progress(completed_test=action, current_step=f"Executed raw command: {action}")
 
-                    You requested to run this command: {action}.
+                command_entry["output"] = output[:12000] if len(output) < 12000 else "Output truncated due to length"
+                command_entry["success"] = success
 
-                    You gave this reason: {reason}
+            if action.upper().startswith("INDEF:") or action.upper().startswith("CHECK:"):
+                print(f"\nExecuting command: {action}")
+                output, success = execute_command(action)
+                print(f"Command output:\n{output}")
+                update_test_progress(completed_test=action, current_step=f"Executed {action}")
 
-                    Output:
-                    {output}
+                command_entry["output"] = output[:12000] if len(output) < 12000 else "Output truncated due to length"
+                command_entry["success"] = success
+            
+            elif action.upper().startswith("RESTART:"):
+                cmd = action.split(":", 1)[1].strip()
+                output = restart_process(cmd)
+                print(output)
+                command_entry["result"] = {"restart_output": output}
 
-                    Execution {'succeeded' if success else 'failed'}
+            elif action.upper().startswith("RUN:"):
+                action = action[4:].strip()            
+                if any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS):
+                    env_check, env_output = check_environment(action)
+                    if env_check:
+                        print(f"\nExecuting command: {action}")
+                        output, success = execute_command(action)
+                        print(f"Command output:\n{output}")
+                        update_test_progress(completed_test=action, current_step=f"Executed {action}")
+                        
+                        analysis_prompt = f"""
+                        {prompt}
 
-                    This is for the result section of this command. Respond based on the command execution in 100 words or less (lesser the better):
-                    """
-                    analysis = llm_client.generate_response(analysis_prompt, 1000)
-                    print(f"Command analysis:\n{analysis}")
-                    # Only add the command output if the length is less than 250 characters
-                    if len(output) < 250:
-                        command_entry["output"] = output
-                    command_entry["success"] = success
-                    command_entry["analysis"] = analysis
+                        You requested to run this command: {action}.
+
+                        You gave this reason: {reason}
+
+                        Output:
+                        {output}
+
+                        Execution {'succeeded' if success else 'failed'}
+
+                        This is for the result section of this command. Respond based on the command execution in 100 words or less (lesser the better):
+                        """
+                        analysis = llm_client.generate_response(analysis_prompt, 1000)
+                        print(f"Command analysis:\n{analysis}")
+                        # Only add the command output if the length is less than 250 characters
+                        if len(output) < 12000:
+                            command_entry["output"] = output
+                        command_entry["success"] = success
+                        command_entry["analysis"] = analysis
+                    else:
+                        error_msg = f"Environment check failed. Cannot execute command: {action}"
+                        print(error_msg)
+                        command_entry["error"] = f"{env_output}"
+                        command_entry["result"] = {"error": error_msg, "env_output": env_output}
+                        wait_for_user()
                 else:
-                    error_msg = f"Environment check failed. Cannot execute command: {action}"
+                    error_msg = f"Error: Invalid action: {action}"
                     print(error_msg)
-                    command_entry["error"] = f"{env_output}"
-                    command_entry["result"] = {"error": error_msg, "env_output": env_output}
-                    wait_for_user()
+                    command_entry["error"] = error_msg
             
             command_history.append(command_entry)
             save_command_history(command_history)
@@ -1137,6 +1431,14 @@ def test_and_debug_mode(llm_client):
         test_progress = load_test_progress()
         iteration += 1
         save_command_history(command_history)
+
+        if retry_with_expert:
+            # Switch back
+            if isinstance(llm_client, VertexAILLM):
+                llm_client.switch_model("claude-3-5-sonnet-20240620")
+            retry_with_expert = False
+
+    kill_all_processes()
 
 def find_file_entry(directories, file_path):
     path_parts = file_path.split(os.sep)
@@ -1337,7 +1639,8 @@ def main():
         print("Invalid mode. Please choose 'generate' or 'test'.")
         return
     
-
-
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        kill_all_processes()
