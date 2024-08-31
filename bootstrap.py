@@ -744,7 +744,7 @@ APPROVAL_REQUIRED_COMMANDS = [
     'sudo apt install',
     './',
     # Add a raw command that requires approval
-    'raw: <raw_command>'
+    'RAW: <raw_command>'
 ]
 
 import subprocess
@@ -866,7 +866,7 @@ def execute_command(command):
         output = check_process_output(cmd)
         return output, True
     # Check if it's a raw command
-    elif command.startswith("raw:"):
+    elif command.startswith("RAW:"):
         raw_command = command[4:].strip()  # Remove 'raw:' prefix and trim whitespace
         if not require_approval(raw_command):
             return "Command not approved by user.", False
@@ -1089,7 +1089,7 @@ def test_and_debug_mode(llm_client):
         last_10_iterations = get_last_10_iterations(command_history)
 
         prompt = f"""
-        You are in test and debug mode for the project.
+        You are in test and debug mode for the project. You are a professional software architect and developer.
 
         Project Summary:
         {project_summary}
@@ -1103,17 +1103,19 @@ def test_and_debug_mode(llm_client):
         Command History (last 10 commands):
         {json.dumps(last_10_iterations, indent=2)}
 
-        Based on this information and your previous actions, suggest the next step to complete the project. Use the existing project structure and avoid creating new files unless absolutely necessary. If the previous action caused an error, fix it. We want to start with some initial functionality and keep testing until all is tested. If you notice that you're stuck on a problem, step back and take an overall view to figure out the issue. Make effort to determine the correct command for each type of action. Carefully read the instructions for each action. You can:
-        1. Run a test using one of these commands (IMPORTANT: DO NOT USE for test/commands that might run indefinitely such as "go run <some server>", use 3 instead): "RUN: {', '.join(ALLOWED_COMMANDS)}"
-        2. Run a command that requires approval (IMPORTANT: DO NOT USE for test/commands that might run indefinitely, use 3 instead): "RUN: {', '.join(APPROVAL_REQUIRED_COMMANDS)}"
-        3. Run a test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} (IMPORTANT: Use this for commands/tests that run indefinitely such as a server (example: go run <some server>) and not for commands that end eventually (unless they are very long)) with "INDEF: <command>"
+        Based on this information and your previous actions, suggest the next step to complete the project. Use the existing project structure and avoid creating new files unless absolutely necessary. 
+        If the previous action caused an error, fix it. We want have a continuous development, integration and testing workflow. Always make progress with each step. If you notice that you're stuck on a problem, step back and use step by step debug methodologies to figure out the issue. 
+        Make effort to determine the correct command for each type of action. Carefully read the instructions for each action. You can:
+
+        1. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} syncronously (blocking), use: "RUN: {', '.join(ALLOWED_COMMANDS)}". The script will wait for the command to finish and provide you with the output.
+        2. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} asyncronously (non-blocking), use: "INDEF: <command>". This will run the command in the background and provide you with the initial output. You can check the output later using "CHECK: <command>"
+        3. Run a raw command that requires approval, use: "RAW: <raw_command>". This will run the command in the shell and provide you with the output. You can use this for any command that is not in the allowed list.
         4. Check the output current running process using "CHECK: <command>"
         5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..."
-        6. (Preferred over 7 due to better cross file context) Inspect multiple files (maximum 4) and rewrite one (one of the files that being inspected only) by replying with "MULTI: <file_path>, <file_path>, ...; WRITE: <file_path>"
-        7. Inspect and rewrite a file in the project structure (cannot create a new file) by replying with "REWRITE: <file_path>" 
-        8. Ask the user for help by replying with "HELP: <your question>". Do this when you see that no progress is being made.
-        9. Restart a running process with "RESTART: <command>"
-        10. Finish testing by replying with "DONE"
+        6. Inspect multiple files (maximum 4) and rewrite one (one of the files that being inspected only) by replying with "MULTI: <file_path>, <file_path>, ...; WRITE: <file_path>" 
+        7. Ask the user for help by replying with "HELP: <your question>". Do this when you see that no progress is being made.
+        8. Restart a running process with "RESTART: <command>"
+        9. Finish testing by replying with "DONE"
 
         """
 
@@ -1127,6 +1129,7 @@ def test_and_debug_mode(llm_client):
 
         Provide your response in the following format:
         ACTION: <your chosen action>
+        GOALS: <list of goals for this action>
         REASON: <brief explanation for your choice (max 80 words)>
 
         What would you like to do next to progress towards project completion?
@@ -1144,10 +1147,12 @@ def test_and_debug_mode(llm_client):
         # Parse the response
         action_match = re.search(r'ACTION:\s*(.*)', response)
         reason_match = re.search(r'REASON:\s*(.*)', response)
+        goals_match = re.search(r'GOALS:\s*(.*)', response)
 
         if action_match:
             action = action_match.group(1).strip()
             reason = reason_match.group(1).strip() if reason_match else "No reason provided"
+            goals = goals_match.group(1).strip() if goals_match else "No goals provided"
             command_entry = {"iteration": iteration, "action": action, "reason": reason}
             save_command_history(command_history)
             if action.upper().startswith("HELP:"):
@@ -1174,7 +1179,9 @@ def test_and_debug_mode(llm_client):
 
                     You chose to inspect the following files: {', '.join(inspect_files)}
 
-                    You gave this reason: {reason}
+                    Reason for this action: {reason}
+
+                    Goals for this action: {goals}
 
                     Inspected files:
                     """
@@ -1188,7 +1195,7 @@ def test_and_debug_mode(llm_client):
                         """
 
                     inspection_prompt += """
-                    Respond to yourself in 50 words or less with the results of the inspection. This is for the result section of this command. If no improvements are needed, state that the files are ready for testing, or provide debug notes:
+                    Respond to yourself in 100 words or less with the results of the inspection. This is for the result section of this command, provide specific instructions to yourself for the next step such as specific changes in the code. If no improvements are needed, state that the files are ready for testing, or provide debug notes:
                     """
 
                     analysis = llm_client.generate_response(inspection_prompt, 4000)
@@ -1224,7 +1231,9 @@ def test_and_debug_mode(llm_client):
                 File content:
                 {current_content}
 
-                You gave this reason: {reason}
+                Reason for this action: {reason}
+
+                Goals for this action: {goals}
 
                 Please provide the updated content for this file, addressing any issues or improvements needed based on your reason. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
                 """
@@ -1239,7 +1248,13 @@ def test_and_debug_mode(llm_client):
                 print(f"\nModified {file_path}")
                 
                 changes_prompt = f"""
-                You requested to inspect multiple files and rewrite one of them. You gave this reason: {reason}.
+                You are a professional software architect and developer.
+
+                You inspected and rewrote one file.
+
+                Reason given for this action: {reason}
+
+                Goals given for this action: {goals}
 
                 Command history (last 10 commands) for better context: {json.dumps(last_10_iterations, indent=2)}
 
@@ -1305,7 +1320,9 @@ def test_and_debug_mode(llm_client):
                 inspection_prompt += f"""
                 You will rewrite the file: {write_file}
 
-                You gave this reason: {reason}
+                Reason for this action: {reason}
+
+                Goals for this action: {goals}
 
                 Please provide the updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files. Use your reason for this action to address any issues. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
                 """
@@ -1323,7 +1340,13 @@ def test_and_debug_mode(llm_client):
                 print(f"\nModified {write_file}")
                 
                 changes_prompt = f"""
-                You requested to inspect multiple files and rewrite one of them. You gave this reason: {reason}.
+                You are a professional software architect and developer.
+
+                You inspected multiple files and rewrote one of them. 
+
+                Reason given for this action: {reason}
+
+                Goals given for this action: {goals}
 
                 Command history (last 10 commands) for better context: {json.dumps(last_10_iterations, indent=2)}
 
@@ -1357,7 +1380,7 @@ def test_and_debug_mode(llm_client):
                 break
 
             # Handle raw commands
-            if action.lower().startswith("raw:"):
+            if action.upper().startswith("RAW:"):
                 print(f"\nExecuting raw command: {action}")
                 output, success = execute_command(action)
                 print(f"Command output:\n{output}")
@@ -1397,6 +1420,8 @@ def test_and_debug_mode(llm_client):
                         You requested to run this command: {action}.
 
                         You gave this reason: {reason}
+
+                        You set these goals: {goals}
 
                         Output:
                         {output}
