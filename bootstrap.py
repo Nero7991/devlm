@@ -1796,7 +1796,7 @@ def test_and_debug_mode(llm_client):
                 With the new content:
                 {new_content}
 
-                This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less. If there are absolutely no changes (even a single different letter is a change), include "FILES ARE IDENTICAL" at the start, signify that the changes you were trying to make are already present:
+                This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less:
                 """
                 changes_summary = llm_client.generate_response(changes_prompt, 1000)
                 print(f"Changes summary:\n{changes_summary}")
