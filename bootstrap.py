@@ -18,10 +18,13 @@ from datetime import datetime
 import shlex
 import signal
 import subprocess
+import tempfile
 import threading
 import queue
 import atexit
 from typing import Optional
+import psutil
+import difflib
 
 try:
     import anthropic
@@ -805,6 +808,27 @@ def kill_all_processes():
 atexit.register(kill_all_processes)
 
 def run_continuous_process(command):
+    # Check if the process is already running at the system level
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            # Check if the command matches (excluding the python interpreter if present)
+            cmdline = proc.info['cmdline']
+            if cmdline and command in ' '.join(cmdline):
+                print(f"Process '{command}' is already running. Terminating it.")
+                parent = psutil.Process(proc.info['pid'])
+                for child in parent.children(recursive=True):
+                    child.terminate()
+                parent.terminate()
+                parent.wait(5)  # Wait for up to 5 seconds
+                if parent.is_running():
+                    print(f"Process didn't terminate gracefully. Forcing...")
+                    parent.kill()
+                    parent.wait(2)
+                break
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+
+    # Start the new process
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
     output_queue = queue.Queue()
     
@@ -816,6 +840,11 @@ def run_continuous_process(command):
     threading.Thread(target=enqueue_output, args=(process.stdout, output_queue), daemon=True).start()
     threading.Thread(target=enqueue_output, args=(process.stderr, output_queue), daemon=True).start()
     
+    # Remove any old entries with the same command
+    global running_processes
+    running_processes = [p for p in running_processes if p['cmd'] != command]
+    
+    # Add the new process to the list
     running_processes.append({"cmd": command, "process": process, "queue": output_queue})
     
     # Wait for 30 seconds and collect initial output
@@ -824,7 +853,7 @@ def run_continuous_process(command):
     while not output_queue.empty():
         initial_output += output_queue.get_nowait()
     
-    return initial_output
+    return f"Started new process: {command}\nInitial output:\n{initial_output}"
 
 def check_process_output(command):
     for process_info in running_processes:
@@ -846,15 +875,27 @@ def check_process_output(command):
 
 def restart_process(command):
     global running_processes
+    process_found = False
     for process_info in running_processes:
         if process_info['cmd'] == command:
+            process_found = True
             try:
                 process_info['process'].terminate()
                 process_info['process'].wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process_info['process'].kill()
             running_processes.remove(process_info)
+            print(f"Process '{command}' has been terminated.")
             break
+    
+    if not process_found:
+        print(f"Process '{command}' was not running.")
+    
+    # Start the process in the background
+    print(f"Starting process '{command}' in the background.")
+    output, success = execute_command(f"INDEF:{command}")
+    
+    return f"Process '{command}' has been restarted. Initial output:\n{output}"
 
 def execute_command(command):
     if command.upper().startswith("INDEF:"):
@@ -907,6 +948,34 @@ def execute_command(command):
         except Exception as e:
             return f"Error executing command: {str(e)}", False
 
+def compare_and_write(file_path, new_content):
+    try:
+        with open(file_path, 'r') as f:
+            old_content = f.read()
+        
+        if old_content != new_content:
+            diff = list(difflib.unified_diff(old_content.splitlines(keepends=True), 
+                                             new_content.splitlines(keepends=True), 
+                                             fromfile='before', 
+                                             tofile='after'))
+            if diff:
+                with open(file_path, 'w') as f:
+                    f.write(new_content)
+                print(f"Changes made to {file_path}:")
+                print(''.join(diff))
+                return True
+            else:
+                print(f"No actual changes to write in {file_path}")
+                return False
+        else:
+            print(f"File {file_path} content is identical. No changes made.")
+            return False
+    except FileNotFoundError:
+        with open(file_path, 'w') as f:
+            f.write(new_content)
+        print(f"Created new file: {file_path}")
+        return True
+
 def check_environment(command):
     print("Checking environment...")
     
@@ -936,7 +1005,6 @@ def check_environment(command):
         print(f"Error: {output}")
         return success, output
 
-    
 
 def modify_file(file_path, content):
     with open(file_path, 'w') as f:
@@ -1043,9 +1111,282 @@ def extract_content(response_text, file_path):
         return response_text.strip()
 
 def get_last_10_iterations(command_history):
-    return command_history[-10:] if len(command_history) > 10 else command_history
+    return command_history[-16:] if len(command_history) > 16 else command_history
+
+llm_notes = {
+    "general": "",
+    "issues": [],
+    "progress": [],
+    "latest_changes": ""
+}
+
+MAX_NOTES_LENGTH = 2000
+
+def update_notes(new_notes):
+    global llm_notes
+    try:
+        updated_notes = json.loads(new_notes)
+        for key in llm_notes.keys():
+            if key in updated_notes:
+                if isinstance(llm_notes[key], list):
+                    llm_notes[key] = (llm_notes[key] + updated_notes[key])[-10:]  # Keep last 10 items
+                else:
+                    llm_notes[key] = updated_notes[key][-MAX_NOTES_LENGTH:]  # Truncate to max length
+    except json.JSONDecodeError:
+        print("Invalid JSON format for notes. Ignoring update.")
+
+def add_line_numbers(content):
+    """
+    Add line numbers to the given content.
+    
+    Args:
+    content (str): The content to add line numbers to.
+    
+    Returns:
+    str: The content with line numbers added.
+    """
+    lines = content.split('\n')
+    numbered_lines = [f"{i+1}:{line}" for i, line in enumerate(lines)]
+    return '\n'.join(numbered_lines)
+
+def remove_line_numbers(numbered_content):
+    """
+    Remove line numbers from the given numbered content.
+    
+    Args:
+    numbered_content (str): The content with line numbers.
+    
+    Returns:
+    str: The content without line numbers.
+    """
+    lines = numbered_content.split('\n')
+    content_lines = [line.split(':', 1)[1] if ':' in line else line for line in lines]
+    return '\n'.join(content_lines)
+
+import tempfile
+import subprocess
+import os
+
+def create_git_patch(file_path, changes):
+    patch_lines = [
+        f"diff --git a/{file_path} b/{file_path}",
+        f"--- a/{file_path}",
+        f"+++ b/{file_path}"
+    ]
+    hunk_lines = []
+    current_line = 1
+    hunk_start = None
+    hunk_old_lines = 0
+    hunk_new_lines = 0
+
+    changes_list = sorted([c for c in changes.split('\n') if c.strip()], key=lambda x: int(x.split(':')[0].lstrip('+-')))
+
+    for change in changes_list:
+        if change.startswith('+'):
+            line_num, content = change[1:].split(':', 1)
+            line_num = int(line_num)
+            if hunk_start is None:
+                hunk_start = max(1, line_num)
+            hunk_lines.append(f"+{content}")
+            hunk_new_lines += 1
+        elif change.startswith('-'):
+            line_num = int(change[1:])
+            if hunk_start is None:
+                hunk_start = max(1, line_num)
+            hunk_lines.append("-")
+            hunk_old_lines += 1
+        else:
+            line_num, content = change.split(':', 1)
+            line_num = int(line_num)
+            if hunk_start is None:
+                hunk_start = max(1, line_num)
+            hunk_lines.append(f"-{content}")
+            hunk_lines.append(f"+{content}")
+            hunk_old_lines += 1
+            hunk_new_lines += 1
+
+        if hunk_start is not None and (len(hunk_lines) > 0 or line_num > current_line):
+            patch_lines.append(f"@@ -{hunk_start},{hunk_old_lines} +{hunk_start},{hunk_new_lines} @@")
+            patch_lines.extend(hunk_lines)
+            hunk_lines = []
+            hunk_start = None
+            hunk_old_lines = 0
+            hunk_new_lines = 0
+
+        current_line = line_num
+
+    if hunk_lines:
+        patch_lines.append(f"@@ -{hunk_start},{hunk_old_lines} +{hunk_start},{hunk_new_lines} @@")
+        patch_lines.extend(hunk_lines)
+
+    return '\n'.join(patch_lines) + '\n'  # Add a newline at the end of the patch
+
+def apply_git_patch(file_path, patch_content):
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.patch') as temp_file:
+        temp_file.write(patch_content)
+        temp_file_path = temp_file.name
+
+    try:
+        # Add the file to the git index if it doesn't exist
+        if not os.path.exists(file_path):
+            with open(file_path, 'w') as f:
+                f.write('')
+            subprocess.run(['git', 'add', file_path], check=True)
+
+        # Apply the patch
+        result = subprocess.run(['git', 'apply', '--verbose', '--ignore-whitespace', '--unidiff-zero', '--reject', temp_file_path], 
+                                capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"Successfully applied patch to {file_path}")
+            return True
+        else:
+            print(f"Failed to apply patch: {result.stderr}")
+            # Try to apply the patch with increased context
+            result = subprocess.run(['git', 'apply', '--verbose', '--ignore-whitespace', '--unidiff-zero', '--reject', '-C3', temp_file_path],
+                                    capture_output=True, text=True)
+            if result.returncode == 0:
+                print(f"Successfully applied patch to {file_path} with increased context")
+                return True
+            else:
+                print(f"Failed to apply patch even with increased context: {result.stderr}")
+                return False
+    except subprocess.CalledProcessError as e:
+        print(f"Error during patch application: {e}")
+        return False
+    finally:
+        os.unlink(temp_file_path)
+
+
+def parse_changes(changes_text):
+    changes = []
+    current_line = 1
+    for line in changes_text.split('\n'):
+        line = line.strip()
+        if line and ':' in line:
+            if line.startswith('+') or line.startswith('-'):
+                changes.append(line)
+            else:
+                line_num, content = line.split(':', 1)
+                if int(line_num) < current_line:
+                    # This is likely a full rewrite, so we'll treat all lines as additions
+                    changes.append(f"+{line_num}:{content}")
+                else:
+                    changes.append(line)
+                current_line = int(line_num) + 1
+        elif line.startswith('-'):
+            # Handle standalone deletions (e.g., "-13")
+            changes.append(f"{line}:")
+    return changes
+
+def apply_changes(current_content, changes):
+    lines = current_content.split('\n') if current_content else []
+    new_lines = []
+    changes_dict = {}
+    
+    # Separate additions/modifications from deletions
+    additions_modifications = []
+    deletions = []
+    
+    for change in changes:
+        line_num = int(change.split(':', 1)[0].lstrip('+-'))
+        if change.startswith('-'):
+            deletions.append(line_num)
+        else:
+            additions_modifications.append((line_num, change))
+    
+    # Sort additions and modifications
+    additions_modifications.sort(key=lambda x: x[0])
+    
+    current_line = 1
+    for line_num, change in additions_modifications:
+        # Add any unchanged lines
+        while current_line < line_num:
+            if current_line not in deletions and current_line <= len(lines):
+                new_lines.append(lines[current_line - 1])
+            current_line += 1
+        
+        # Apply the change
+        if change.startswith('+'):
+            new_lines.append(change.split(':', 1)[1])
+            if line_num not in deletions:
+                current_line -= 1  # Don't increment current_line for additions
+        else:
+            new_lines.append(change.split(':', 1)[1])
+        current_line += 1
+    
+    # Add any remaining unchanged lines
+    while current_line <= len(lines):
+        if current_line not in deletions:
+            new_lines.append(lines[current_line - 1])
+        current_line += 1
+    
+    return '\n'.join(new_lines)
+
+def compare_and_write(file_path, new_content):
+    try:
+        with open(file_path, 'r') as f:
+            old_content = f.read()
+        
+        if old_content != new_content:
+            diff = list(difflib.unified_diff(old_content.splitlines(keepends=True), 
+                                             new_content.splitlines(keepends=True), 
+                                             fromfile='before', 
+                                             tofile='after'))
+            if diff:
+                with open(file_path, 'w') as f:
+                    f.write(new_content)
+                print(f"Changes made to {file_path}:")
+                print(''.join(diff))
+                return True
+            else:
+                print(f"No actual changes to write in {file_path}")
+                return False
+        else:
+            print(f"File {file_path} content is identical. No changes made.")
+            return False
+    except FileNotFoundError:
+        with open(file_path, 'w') as f:
+            f.write(new_content)
+        print(f"Created new file: {file_path}")
+        return True
+
+def update_project_structure(file_path):
+    with open('project_structure.json', 'r') as f:
+        project_structure = json.load(f)
+    
+    path_parts = file_path.split(os.sep)
+    current_level = project_structure
+    
+    for part in path_parts[:-1]:
+        if part not in current_level:
+            current_level[part] = {}
+        current_level = current_level[part]
+    
+    if isinstance(current_level, dict):
+        if path_parts[-1] not in current_level:
+            current_level[path_parts[-1]] = []
+    elif isinstance(current_level, list):
+        if path_parts[-1] not in current_level:
+            current_level.append(path_parts[-1])
+    
+    with open('project_structure.json', 'w') as f:
+        json.dump(project_structure, f, indent=2)
+    
+# Add this new global variable
+unchanged_files = {}
 
 def test_and_debug_mode(llm_client):
+    global unchanged_files
+
+    # Add this function to handle unexpected terminations
+    def handle_unexpected_termination(signum, frame):
+        print("Unexpected termination detected. Saving current state...")
+        save_command_history(command_history)
+        sys.exit(1)
+
+    # Register the signal handler
+    signal.signal(signal.SIGTERM, handle_unexpected_termination)
+
     with open('project_summary.md', 'r') as f:
         project_summary = f.read()
 
@@ -1089,13 +1430,10 @@ def test_and_debug_mode(llm_client):
         last_10_iterations = get_last_10_iterations(command_history)
 
         prompt = f"""
-        You are in test and debug mode for the project. You are a professional software architect and developer.
+        You are in test and debug mode for the project. You are a professional software architect and developer. Adhere to the directives, best practices and provide accurate responses based on the project context. You can refer to the project summary, technical brief, and project structure for information.
 
         Project Summary:
         {project_summary}
-
-        Directory Summaries:
-        {json.dumps(directory_summaries, indent=2)}
 
         Project Structure:
         {json.dumps(project_structure, indent=2)}
@@ -1103,34 +1441,48 @@ def test_and_debug_mode(llm_client):
         Command History (last 10 commands):
         {json.dumps(last_10_iterations, indent=2)}
 
-        Based on this information and your previous actions, suggest the next step to complete the project. Use the existing project structure and avoid creating new files unless absolutely necessary. 
-        If the previous action caused an error, fix it. We want have a continuous development, integration and testing workflow. Always make progress with each step. If you notice that you're stuck on a problem, step back and use step by step debug methodologies to figure out the issue. 
-        Make effort to determine the correct command for each type of action. Carefully read the instructions for each action. You can:
+        Your Notes (feel free to update these):
+        {json.dumps(llm_notes, indent=2)}
+
+        Directives:
+        CRITICAL: Use the command history (especially the previous command) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
+        0. Follow a continuous development, integration, and testing workflow. This includes writing code, testing, debugging, and fixing issues. 
+        1. When doing development, consider reading multiple files to better integrate the current file with the rest of the project.
+        2. Never change code due to development environmental factors (ports, paths, etc.) unless explicitly mentioned in the prompt.
+        3. If there are environment related issue, use raw commands to fix them.
+        4. Use the files in the project structure to understand the context and provide accurate responses. Do not add new files.
+        5. Make sure that we're making progress with each step. If we go around in circles, assume that debug is wrong and start from the beginning.
+        6. Do not keep trying to modify the same file repeatedly.
+        7. You cannot use any one action more than once in a row.
+         
+        You can take the following actions:
 
         1. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} syncronously (blocking), use: "RUN: {', '.join(ALLOWED_COMMANDS)}". The script will wait for the command to finish and provide you with the output.
         2. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} asyncronously (non-blocking), use: "INDEF: <command>". This will run the command in the background and provide you with the initial output. You can check the output later using "CHECK: <command>"
         3. Run a raw command that requires approval, use: "RAW: <raw_command>". This will run the command in the shell and provide you with the output. You can use this for any command that is not in the allowed list.
         4. Check the output current running process using "CHECK: <command>"
         5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..."
-        6. Inspect multiple files (maximum 4) and rewrite one (one of the files that being inspected only) by replying with "MULTI: <file_path>, <file_path>, ...; WRITE: <file_path>" 
+        6. Inspect multiple files (maximum 4) and modify one (one of the files that being inspected only) by replying with "MULTI: <file_path>, <file_path>, ...; MODIFY: <file_path>" 
         7. Ask the user for help by replying with "HELP: <your question>". Do this when you see that no progress is being made.
         8. Restart a running process with "RESTART: <command>"
         9. Finish testing by replying with "DONE"
 
         """
-
         if running_processes:
             prompt_prcoesses = f"""
             Currently Running Processes:
             {json.dumps([{'cmd': p['cmd']} for p in running_processes], indent=2)}
             """
+        else:
+            prompt_prcoesses = "\nNo processes currently running."
 
         prompt_extension = f"""
 
         Provide your response in the following format:
         ACTION: <your chosen action>
-        GOALS: <list of goals for this action>
-        REASON: <brief explanation for your choice (max 80 words)>
+        GOALS: <Context for the goals are when your executing the command>
+        REASON: <Provide this as reason and context for when you're executing the actual command (max 80 words)>
+        NOTES: <optional: updated notes in JSON format>
 
         What would you like to do next to progress towards project completion?
         """
@@ -1141,27 +1493,42 @@ def test_and_debug_mode(llm_client):
             final_prompt = prompt + prompt_extension
         
         print(f"\nGenerating next step (Iteration {iteration})...")
+        # Print the prompt for the user
+        # print(final_prompt)
         response = llm_client.generate_response(final_prompt, 4000)
         print(f"LLM response:\n{response}")
 
         # Parse the response
         action_match = re.search(r'ACTION:\s*(.*)', response)
         reason_match = re.search(r'REASON:\s*(.*)', response)
-        goals_match = re.search(r'GOALS:\s*(.*)', response)
+        goals_match = re.search(r'GOALS:\s*((?:\d+\.\s*.*\n?)+)', response, re.DOTALL)
+        notes_match = re.search(r'NOTES:\s*((?:\d+\.\s*.*\n?)+)', response, re.DOTALL)
 
         if action_match:
             action = action_match.group(1).strip()
             reason = reason_match.group(1).strip() if reason_match else "No reason provided"
             goals = goals_match.group(1).strip() if goals_match else "No goals provided"
-            command_entry = {"iteration": iteration, "action": action, "reason": reason}
-            save_command_history(command_history)
-            if action.upper().startswith("HELP:"):
+            command_entry = {"iteration": iteration, "action": action, "reason": reason, "goals": goals}
+
+            if notes_match:
+                new_notes = notes_match.group(1).strip()
+                command_entry["notes_updated"] = True 
+                update_notes(new_notes)
+                print(f"Updated notes:\n{json.dumps(llm_notes, indent=2)}")
+
+            if action.upper().startswith("NOTES:"):
+                new_notes = action.split(":", 1)[1].strip()
+                update_notes(new_notes)
+                print(f"Updated notes:\n{json.dumps(llm_notes, indent=2)}")
+                command_entry["notes_updated"] = True
+
+            elif action.upper().startswith("HELP:"):
                 question = action.split(":")[1].strip()
                 print(f"\nAsking for help with the question: {question}")
                 user_response = input("Please provide your response to the model's question: ")        
                 command_entry["user"] = user_response
 
-            if action.upper().startswith("INSPECT:"):
+            elif action.upper().startswith("INSPECT:"):
                 file_paths = action.split(":")[1].strip()
                 try:
                     inspect_files = [f.strip() for f in file_paths.split(",")]
@@ -1220,6 +1587,9 @@ def test_and_debug_mode(llm_client):
                     error_msg = f"Error: File not found: {file_path}\n You cannot create a new file. Try to implement the functionality in an existing file in the project structure or ask user for help."
                     command_entry["error"] = error_msg
                     print("File not found. Provided LLM with the error message and suggestion.")
+                    command_history.append(command_entry)
+                    save_command_history(command_history)
+                    iteration += 1
                     continue
                 current_content = read_file(file_path)
                 file_brief = get_file_technical_brief(technical_brief, file_path)
@@ -1264,7 +1634,7 @@ def test_and_debug_mode(llm_client):
                 With the new content:
                 {extracted_content}
 
-                This is for the result section of this command. Provide a brief summary of the modifications in 50 words or less. If there are no changes, include "FILES ARE IDENTICAL" at the start, signify that the changes you were trying to make are already present, and that you possibly made a mistake in the inspection:
+                This is for the result section of this command. Provide a brief summary of the modifications in 50 words or less and if the goals were achieved.
                 """
                 changes_summary = llm_client.generate_response(changes_prompt, 1000)
                 print(f"Changes summary:\n{changes_summary}")
@@ -1287,10 +1657,27 @@ def test_and_debug_mode(llm_client):
                 inspect_files = [f.strip() for f in parts[0].split(":")[1].split(",")]
                 write_file = parts[1].split(":")[1].strip()
 
-                if write_file not in inspect_files:
-                    error_msg = f"Error: The file to be written ({write_file}) must be one of the inspected files."
+                # Check if the file is in the unchanged_files list and still under constraint
+                if write_file in unchanged_files and unchanged_files[write_file] > 0:
+                    error_msg = f"Error: The file {write_file} cannot be modified for {unchanged_files[write_file]} more iterations due to no changes in the previous attempt."
                     command_entry["error"] = error_msg
                     print(error_msg)
+                    command_history.append(command_entry)
+                    save_command_history(command_history)
+                    iteration += 1
+                    continue
+
+                if write_file not in inspect_files:
+                    error_msg = f"Error: The file to be written ({write_file}) must be one of the inspected files."
+                    # Check if error field is already present in the command entry, then concat less set
+                    if "error" not in command_entry:
+                        command_entry["error"] = error_msg
+                    else:
+                        command_entry["error"] += error_msg
+                    print(error_msg)
+                    command_history.append(command_entry)
+                    save_command_history(command_history)
+                    iteration += 1
                     continue
 
                 file_contents = {}
@@ -1298,13 +1685,42 @@ def test_and_debug_mode(llm_client):
                     if not os.path.exists(file_path):
                         error_msg = f"Error: File not found: {file_path}"
                         file_contents[file_path] = error_msg
+                        if "error" not in command_entry:
+                            command_entry["error"] = error_msg
+                        else:
+                            command_entry["error"] += error_msg
                     else:
-                        file_contents[file_path] = read_file(file_path)
+                        content = read_file(file_path)
+                        numbered_content = add_line_numbers(content)
+                        file_contents[file_path] = numbered_content
+
+                if write_file not in file_contents or file_contents[write_file].startswith("Error: File not found"):
+                    print(f"The file to be written ({write_file}) does not exist.")
+                    user_approval = input(f"Do you want to create the file {write_file}? (yes/no): ").lower().strip()
+                    if user_approval == 'yes':
+                        # Create the directory if it doesn't exist
+                        os.makedirs(os.path.dirname(write_file), exist_ok=True)
+                        # Create an empty file
+                        open(write_file, 'w').close()
+                        print(f"Created new file: {write_file}")
+                        file_contents[write_file] = ""  # Add empty content to file_contents
+
+                        # Update project structure
+                        update_project_structure(write_file)
+                        print(f"Updated project structure with new file: {write_file}")
+                    else:
+                        error_msg = f"User denied creation of new file: {write_file}. You should work with existing files only."
+                        command_entry["error"] = error_msg
+                        print(error_msg)
+                        command_history.append(command_entry)
+                        save_command_history(command_history)
+                        iteration += 1
+                        continue
 
                 inspection_prompt = f"""
                 {prompt}
 
-                You chose to inspect multiple files and rewrite one of them.
+                You chose to inspect multiple files and modify one of them.
 
                 Inspected files:
                 """
@@ -1318,14 +1734,19 @@ def test_and_debug_mode(llm_client):
                 """
 
                 inspection_prompt += f"""
-                You will rewrite the file: {write_file}
+                You will modify the file addressing the following goals.
 
                 Reason for this action: {reason}
 
                 Goals for this action: {goals}
 
-                Please provide the updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files. Use your reason for this action to address any issues. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
+                Please provide the updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
                 """
+                # Use the following format to provide changes for the file. There should be no other content in your response, only changes to the file content:
+                # - To add a line after a line number: +<line_number>:new_content
+                # - To remove a line: -<line_number>
+                # - To modify a line: <line_number>:new_content
+
                 # If retry_with_expert is set, token = 4096, else 8192
                 if retry_with_expert:
                     new_content = llm_client.generate_response(inspection_prompt, 4096)
@@ -1333,10 +1754,29 @@ def test_and_debug_mode(llm_client):
                     new_content = llm_client.generate_response(inspection_prompt, 8192)
 
                 # new_content = llm_client.generate_response(inspection_prompt, )  # Increased token limit for multiple files
-                
                 extracted_content = extract_content(new_content, write_file)
-                
+
+                # Print changes
+                # print(f"Changes:\n{changes}")
+                # Parse and apply changes
+                # current_content = remove_line_numbers(file_contents[write_file])
+                # parsed_changes = parse_changes(changes)
+                # new_content = apply_changes(current_content, parsed_changes)
+                changes_made = compare_and_write(write_file, extracted_content)
                 modify_file(write_file, extracted_content)
+                if not changes_made:
+                    print("Warning: No actual changes were made in this iteration.")
+                    command_entry["result"] = {"warning": "No actual changes were made in this iteration."}
+
+                    # Add the file to unchanged_files with a counter of 2
+                    unchanged_files[write_file] = 2
+
+                    command_entry["error"] = f"The file {write_file} cannot be modified for the next 2 successful iterations due to no changes in this attempt."
+
+                    command_history.append(command_entry)
+                    save_command_history(command_history)
+                    iteration += 1
+                    continue
                 print(f"\nModified {write_file}")
                 
                 changes_prompt = f"""
@@ -1354,14 +1794,14 @@ def test_and_debug_mode(llm_client):
                 {file_contents[write_file]}
 
                 With the new content:
-                {extracted_content}
+                {new_content}
 
-                This is for the result section of this command. Provide a brief summary of the modifications in 50 words or less. If there are no changes, include "FILES ARE IDENTICAL" at the start, signify that the changes you were trying to make are already present, and that you possibly made a mistake in the inspection:
+                This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less. If there are absolutely no changes (even a single different letter is a change), include "FILES ARE IDENTICAL" at the start, signify that the changes you were trying to make are already present:
                 """
                 changes_summary = llm_client.generate_response(changes_prompt, 1000)
                 print(f"Changes summary:\n{changes_summary}")
                 
-                technical_brief = update_technical_brief(write_file, extracted_content, iteration, mode="test", test_info=changes_summary)
+                technical_brief = update_technical_brief(write_file, new_content, iteration, mode="test", test_info=changes_summary)
                 update_test_progress(current_step=f"Inspected multiple files and modified {write_file}")
                 
                 command_entry["result"] = {"changes_summary": changes_summary}
@@ -1380,7 +1820,7 @@ def test_and_debug_mode(llm_client):
                 break
 
             # Handle raw commands
-            if action.upper().startswith("RAW:"):
+            elif action.upper().startswith("RAW:"):
                 print(f"\nExecuting raw command: {action}")
                 output, success = execute_command(action)
                 print(f"Command output:\n{output}")
@@ -1389,7 +1829,7 @@ def test_and_debug_mode(llm_client):
                 command_entry["output"] = output[:12000] if len(output) < 12000 else "Output truncated due to length"
                 command_entry["success"] = success
 
-            if action.upper().startswith("INDEF:") or action.upper().startswith("CHECK:"):
+            elif action.upper().startswith("INDEF:") or action.upper().startswith("CHECK:"):
                 print(f"\nExecuting command: {action}")
                 output, success = execute_command(action)
                 print(f"Command output:\n{output}")
@@ -1456,6 +1896,12 @@ def test_and_debug_mode(llm_client):
         test_progress = load_test_progress()
         iteration += 1
         save_command_history(command_history)
+
+        # Decrease the counter for unchanged files at the end of each iteration
+        for file in list(unchanged_files.keys()):
+            unchanged_files[file] -= 1
+            if unchanged_files[file] == 0:
+                del unchanged_files[file]
 
         if retry_with_expert:
             # Switch back
@@ -1669,3 +2115,6 @@ if __name__ == "__main__":
         main()
     finally:
         kill_all_processes()
+else:
+    # For testing purposes
+    __all__ = ['parse_changes', 'apply_changes']
