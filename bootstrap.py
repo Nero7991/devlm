@@ -738,12 +738,12 @@ ALLOWED_COMMANDS = [
     'docker run',
     'pip3 install',
     'go mod tidy',
+    'curl',
+    'wget',
     # Add more commands as needed
 ]
 
 APPROVAL_REQUIRED_COMMANDS = [
-    'curl',
-    'wget',
     'sudo apt install',
     './',
     # Add a raw command that requires approval
@@ -807,6 +807,8 @@ def kill_all_processes():
 
 atexit.register(kill_all_processes)
 
+process_initial_outputs = {}
+
 def run_continuous_process(command):
     # Check if the process is already running at the system level
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
@@ -850,12 +852,17 @@ def run_continuous_process(command):
     # Wait for 30 seconds and collect initial output
     time.sleep(30)
     initial_output = ""
+    global process_initial_outputs
     while not output_queue.empty():
         initial_output += output_queue.get_nowait()
+
+        # Store the initial output
+    process_initial_outputs[command] = initial_output   
     
     return f"Started new process: {command}\nInitial output:\n{initial_output}"
 
 def check_process_output(command):
+    global running_processes, process_initial_outputs
     for process_info in running_processes:
         if process_info["cmd"] == command:
             process = process_info["process"]
@@ -869,7 +876,11 @@ def check_process_output(command):
             while not output_queue.empty():
                 output += output_queue.get_nowait()
             
-            return output if output else "No new output since last check."
+            if output:
+                return output
+            else:
+                initial_output = process_initial_outputs.get(command, "")
+                return f"No new output since last check. Here's the initial output for reference:\n{initial_output}"
     
     return f"No running process found for command: {command}"
 
@@ -897,56 +908,73 @@ def restart_process(command):
     
     return f"Process '{command}' has been restarted. Initial output:\n{output}"
 
-def execute_command(command):
+command_decisions = {}
+
+def execute_command(command, timeout=600):  # 600 seconds = 10 minutes
+    global command_decisions
+
     if command.upper().startswith("INDEF:"):
         cmd = command.split(":", 1)[1].strip()
         output = run_continuous_process(cmd)
-        return f"Started continuous process: {cmd}\nInitial output:\n{output}", True
+        return output, True
     elif command.upper().startswith("CHECK:"):
         cmd = command.split(":", 1)[1].strip()
         output = check_process_output(cmd)
         return output, True
-    # Check if it's a raw command
     elif command.startswith("RAW:"):
-        raw_command = command[4:].strip()  # Remove 'raw:' prefix and trim whitespace
+        raw_command = command[4:].strip()
         if not require_approval(raw_command):
             return "Command not approved by user.", False
-
-        try:
-            process = subprocess.Popen(raw_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-            stdout, stderr = process.communicate()
-            return_code = process.returncode
-
-            full_output = f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
-
-            if return_code != 0:
-                return f"Error (code {return_code}):\n{full_output}", False
-            else:
-                return full_output.strip(), True
-        except Exception as e:
-            return f"Error executing raw command: {str(e)}", False
+        
+        return execute_command_with_timeout(raw_command, timeout)
     else:
-        # Check if the command requires approval
+        if "go run" in command and command not in command_decisions:
+            suggestion = (
+                "This command appears to start a long-running process (like an API server). "
+                "Consider using the INDEF action if it needs to run indefinitely. "
+                "If you believe this process should complete quickly, you can use the RUN action again."
+            )
+            command_decisions[command] = "suggested_indef"
+            return suggestion, True
+
+        if command in command_decisions and command_decisions[command] == "suggested_indef":
+            # LLM has decided to run it again, so mark it as not indefinite
+            command_decisions[command] = "not_indefinite"
+        
         if any(command.startswith(cmd) for cmd in APPROVAL_REQUIRED_COMMANDS):
             if not require_approval(command):
                 return "Command not approved by user.", False
+        
+        return execute_command_with_timeout(command, timeout)
 
-        # Existing logic for non-raw commands
-        try:
-            process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-            stdout, stderr = process.communicate()
-            return_code = process.returncode
-
-            full_output = f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
-
-            if return_code != 0:
-                return f"Error (code {return_code}):\n{full_output}", False
-            else:
-                return full_output.strip(), True
-        except FileNotFoundError:
-            return f"Error: Command '{command.split()[0]}' not found.", False
-        except Exception as e:
-            return f"Error executing command: {str(e)}", False
+def execute_command_with_timeout(command, timeout):
+    process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    
+    def target():
+        nonlocal process
+        process.communicate()
+    
+    thread = threading.Thread(target=target)
+    thread.start()
+    thread.join(timeout)
+    
+    if thread.is_alive():
+        process.terminate()
+        thread.join()
+        return (f"Command execution timed out after {timeout} seconds. "
+                f"This might be an indefinite process (consider using INDEF action) "
+                f"or a long process (consider running again as some of it might have completed). "
+                f"The process has been terminated to progress the project development.", False)
+    
+    stdout, stderr = process.communicate()
+    return_code = process.returncode
+    
+    full_output = f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+    
+    if return_code != 0:
+        return f"Error (code {return_code}):\n{full_output}", False
+    else:
+        return full_output.strip(), True
 
 def compare_and_write(file_path, new_content):
     try:
@@ -1375,6 +1403,37 @@ def update_project_structure(file_path):
 # Add this new global variable
 unchanged_files = {}
 
+CHAT_FILE = "chat.txt"
+last_chat_content = ""
+chat_updated = False
+chat_updated_iteration = 0
+
+def ensure_chat_file_exists():
+    if not os.path.exists(CHAT_FILE):
+        with open(CHAT_FILE, 'w') as f:
+            f.write("# Write your notes here. The script will pause after the current iteration when you save this file.\n")
+        print(f"Created {CHAT_FILE}. You can write notes in this file to communicate with the LLM.")
+
+def read_chat_file():
+    if os.path.exists(CHAT_FILE):
+        with open(CHAT_FILE, 'r') as f:
+            return f.read().strip()
+    return ""
+
+def check_chat_updates():
+    global last_chat_content, chat_updated
+    current_content = read_chat_file()
+    if current_content != last_chat_content:
+        last_chat_content = current_content
+        chat_updated = True
+        return True
+    return False
+
+def wait_for_user_input():
+    input("Chat file updated. Press Enter to continue...")
+    global chat_updated
+    chat_updated = False
+
 def test_and_debug_mode(llm_client):
     global unchanged_files
 
@@ -1426,7 +1485,15 @@ def test_and_debug_mode(llm_client):
 
     retry_with_expert = False
 
+    global unchanged_files, last_chat_content, chat_updated, chat_updated_iteration
+
     while True:
+        # Check for chat updates at the start of each iteration
+        if check_chat_updates():
+            chat_updated_iteration = iteration
+            print("Chat file updated. Pausing...")
+            wait_for_user_input()
+
         last_10_iterations = get_last_10_iterations(command_history)
 
         prompt = f"""
@@ -1443,6 +1510,9 @@ def test_and_debug_mode(llm_client):
 
         Your Notes (feel free to update these):
         {json.dumps(llm_notes, indent=2)}
+
+        User's Chat Notes (last updated iteration): {chat_updated_iteration} 
+        {last_chat_content}
 
         Directives:
         CRITICAL: Use the command history (especially the previous command) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
@@ -1482,7 +1552,7 @@ def test_and_debug_mode(llm_client):
         ACTION: <your chosen action>
         GOALS: <Context for the goals are when your executing the command>
         REASON: <Provide this as reason and context for when you're executing the actual command (max 80 words)>
-        NOTES: <optional: updated notes in JSON format>
+        NOTES: <Optional: updated notes in JSON format>
 
         What would you like to do next to progress towards project completion?
         """
@@ -1837,6 +1907,26 @@ def test_and_debug_mode(llm_client):
 
                 command_entry["output"] = output[:12000] if len(output) < 12000 else "Output truncated due to length"
                 command_entry["success"] = success
+
+                # Analysis step for CHECK commands
+                if action.upper().startswith("CHECK:"):
+                    analysis_prompt = f"""
+                    {prompt}
+
+                    You requested to check this command: {action}.
+
+                    You gave this reason: {reason}
+
+                    You set these goals: {goals}
+
+                    Check result:
+                    {output}
+
+                    This is for the result section of this command. Analyze the check result and determine if further action is needed. Respond in 100 words or less:
+                    """
+                    analysis = llm_client.generate_response(analysis_prompt, 1000)
+                    print(f"Check analysis:\n{analysis}")
+                    command_entry["analysis"] = analysis
             
             elif action.upper().startswith("RESTART:"):
                 cmd = action.split(":", 1)[1].strip()
@@ -1853,30 +1943,33 @@ def test_and_debug_mode(llm_client):
                         output, success = execute_command(action)
                         print(f"Command output:\n{output}")
                         update_test_progress(completed_test=action, current_step=f"Executed {action}")
-                        
-                        analysis_prompt = f"""
-                        {prompt}
 
-                        You requested to run this command: {action}.
+                        if "This command appears to start a long-running process" in output:
+                            command_entry["suggestion"] = output
+                        else:                      
+                            analysis_prompt = f"""
+                            {prompt}
 
-                        You gave this reason: {reason}
+                            You requested to run this command: {action}.
 
-                        You set these goals: {goals}
+                            You gave this reason: {reason}
 
-                        Output:
-                        {output}
+                            You set these goals: {goals}
 
-                        Execution {'succeeded' if success else 'failed'}
+                            Output:
+                            {output}
 
-                        This is for the result section of this command. Respond based on the command execution in 100 words or less (lesser the better):
-                        """
-                        analysis = llm_client.generate_response(analysis_prompt, 1000)
-                        print(f"Command analysis:\n{analysis}")
-                        # Only add the command output if the length is less than 250 characters
-                        if len(output) < 12000:
-                            command_entry["output"] = output
-                        command_entry["success"] = success
-                        command_entry["analysis"] = analysis
+                            Execution {'succeeded' if success else 'failed'}
+
+                            This is for the result section of this command. Respond based on the command execution in 100 words or less (lesser the better):
+                            """
+                            analysis = llm_client.generate_response(analysis_prompt, 1000)
+                            print(f"Command analysis:\n{analysis}")
+                            # Only add the command output if the length is less than 250 characters
+                            if len(output) < 12000:
+                                command_entry["output"] = output
+                            command_entry["success"] = success
+                            command_entry["analysis"] = analysis
                     else:
                         error_msg = f"Environment check failed. Cannot execute command: {action}"
                         print(error_msg)
@@ -2100,6 +2193,9 @@ def generate():
         print("You can run the script again to continue from where it left off.")
 
 def main():
+    # Ensure chat file exists before entering any mode
+    ensure_chat_file_exists()
+
     mode = input("Enter mode (generate/test): ").lower()
     
     if mode == "test":
