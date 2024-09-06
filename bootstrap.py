@@ -1424,14 +1424,14 @@ def check_chat_updates():
     global last_chat_content, chat_updated
     current_content = read_chat_file()
     if current_content != last_chat_content:
-        last_chat_content = current_content
         chat_updated = True
         return True
     return False
 
 def wait_for_user_input():
-    input("Chat file updated. Press Enter to continue...")
-    global chat_updated
+    input("Press Enter to continue...")
+    global chat_updated, last_chat_content
+    last_chat_content = read_chat_file()
     chat_updated = False
 
 def test_and_debug_mode(llm_client):
@@ -1486,6 +1486,7 @@ def test_and_debug_mode(llm_client):
     retry_with_expert = False
 
     global unchanged_files, last_chat_content, chat_updated, chat_updated_iteration
+    last_chat_content = read_chat_file()
 
     while True:
         # Check for chat updates at the start of each iteration
@@ -1619,6 +1620,8 @@ def test_and_debug_mode(llm_client):
                     Reason for this action: {reason}
 
                     Goals for this action: {goals}
+
+                    Inspect for dependencies between the files. Check that variables, functions, parameters, and return values are used correctly and consistently across the files.
 
                     Inspected files:
                     """
@@ -1810,7 +1813,7 @@ def test_and_debug_mode(llm_client):
 
                 Goals for this action: {goals}
 
-                Please provide the updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
+                Please provide the complete updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, you must not make an unnecessary changes to the code. You must provide the full content since this is directly written to the file without processing. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
                 """
                 # Use the following format to provide changes for the file. There should be no other content in your response, only changes to the file content:
                 # - To add a line after a line number: +<line_number>:new_content
