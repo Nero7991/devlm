@@ -1139,13 +1139,14 @@ def extract_content(response_text, file_path):
         return response_text.strip()
 
 def get_last_10_iterations(command_history):
-    return command_history[-16:] if len(command_history) > 16 else command_history
+    return command_history[-10:] if len(command_history) > 10 else command_history
 
 llm_notes = {
     "general": "",
     "issues": [],
     "progress": [],
-    "latest_changes": ""
+    "latest_changes": "",
+    "next_steps": ""
 }
 
 MAX_NOTES_LENGTH = 2000
@@ -1434,8 +1435,13 @@ def wait_for_user_input():
     last_chat_content = read_chat_file()
     chat_updated = False
 
+last_inspected_files = []
+
+HasUserInterrupted = False
+
+
 def test_and_debug_mode(llm_client):
-    global unchanged_files
+    global unchanged_files, last_inspected_files
 
     # Add this function to handle unexpected terminations
     def handle_unexpected_termination(signum, frame):
@@ -1462,7 +1468,9 @@ def test_and_debug_mode(llm_client):
 
     iteration = len(command_history) + 1
 
-    def handle_interrupt(signum, frame):
+
+
+    def handle_user_suggestion():
         print("\nCtrl+C pressed. You can type 'exit' to quit or provide a suggestion.")
         user_input = input("Your input (exit/suggestion): ").strip()
         if user_input.lower() == 'exit':
@@ -1470,15 +1478,12 @@ def test_and_debug_mode(llm_client):
             print("Exiting the program.")
             sys.exit(0)
         else:
-            command_entry = {
-                "iteration": iteration,
-                "action": "USER_SUGGESTION",
-                "reason": "User interrupt",
-                "suggestion": user_input
-            }
-            command_history.append(command_entry)
-            save_command_history(command_history)
-            print("Suggestion added to command history. Continuing with the program.")
+            return user_input
+
+    global HasUserInterrupted
+    def handle_interrupt(signum, frame):
+        global HasUserInterrupted
+        HasUserInterrupted = True
 
     # Set up the signal handler
     signal.signal(signal.SIGINT, handle_interrupt)
@@ -1488,8 +1493,16 @@ def test_and_debug_mode(llm_client):
     global unchanged_files, last_chat_content, chat_updated, chat_updated_iteration
     last_chat_content = read_chat_file()
 
+    # Previous action analysis
+    previous_action_analysis = None
+
     while True:
         # Check for chat updates at the start of each iteration
+        check_all_processes()
+
+        if HasUserInterrupted:
+            user_suggestion = handle_user_suggestion()
+
         if check_chat_updates():
             chat_updated_iteration = iteration
             print("Chat file updated. Pausing...")
@@ -1509,27 +1522,29 @@ def test_and_debug_mode(llm_client):
         Command History (last 10 commands):
         {json.dumps(last_10_iterations, indent=2)}
 
-        Your Notes (feel free to update these):
-        {json.dumps(llm_notes, indent=2)}
-
-        User's Chat Notes (last updated iteration): {chat_updated_iteration} 
+        Administrator's Notes: 
         {last_chat_content}
+        
+        {"Administrator suggestions for this action: " + user_suggestion if HasUserInterrupted else ""}
+
+        {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
 
         Directives:
         CRITICAL: Use the command history (especially the previous command) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
-        0. Follow a continuous development, integration, and testing workflow. This includes writing code, testing, debugging, and fixing issues. 
+        0. Follow a continuous development, integration, and testing workflow. Do This includes writing code, testing, debugging, and fixing issues.
+        0. Put higher emphasis on the result/anlysis from the last iteration to make progress.
         1. When doing development, consider reading multiple files to better integrate the current file with the rest of the project.
         2. Never change code due to development environmental factors (ports, paths, etc.) unless explicitly mentioned in the prompt.
         3. If there are environment related issue, use raw commands to fix them.
         4. Use the files in the project structure to understand the context and provide accurate responses. Do not add new files.
         5. Make sure that we're making progress with each step. If we go around in circles, assume that debug is wrong and start from the beginning.
-        6. Do not keep trying to modify the same file repeatedly.
+        6. Do not repeat the same action multiple times unless absolutely necessary.
         7. You cannot use any one action more than once in a row.
          
         You can take the following actions:
 
         1. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} syncronously (blocking), use: "RUN: {', '.join(ALLOWED_COMMANDS)}". The script will wait for the command to finish and provide you with the output.
-        2. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} asyncronously (non-blocking), use: "INDEF: <command>". This will run the command in the background and provide you with the initial output. You can check the output later using "CHECK: <command>"
+        2. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} asyncronously (non-blocking), use: "INDEF: <command>". This will run the command in the background and provide you with the initial output.
         3. Run a raw command that requires approval, use: "RAW: <raw_command>". This will run the command in the shell and provide you with the output. You can use this for any command that is not in the allowed list.
         4. Check the output current running process using "CHECK: <command>"
         5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..."
@@ -1553,7 +1568,6 @@ def test_and_debug_mode(llm_client):
         ACTION: <your chosen action>
         GOALS: <Context for the goals are when your executing the command>
         REASON: <Provide this as reason and context for when you're executing the actual command (max 80 words)>
-        NOTES: <Optional: updated notes in JSON format>
 
         What would you like to do next to progress towards project completion?
         """
@@ -1562,6 +1576,9 @@ def test_and_debug_mode(llm_client):
             final_prompt = prompt + prompt_prcoesses + prompt_extension
         else:
             final_prompt = prompt + prompt_extension
+
+        HasUserInterrupted = False
+        previous_action_analysis = None
         
         print(f"\nGenerating next step (Iteration {iteration})...")
         # Print the prompt for the user
@@ -1604,6 +1621,20 @@ def test_and_debug_mode(llm_client):
                 try:
                     inspect_files = [f.strip() for f in file_paths.split(",")]
                     file_contents = {}
+
+                    # Check if the current set of files is the same as the last inspected set
+                    if set(inspect_files) == set(last_inspected_files):
+                        error_msg = "Error: Cannot inspect the same set of files consecutively. Please include at least one different file."
+                        print(error_msg)
+                        command_entry["error"] = error_msg
+                        command_history.append(command_entry)
+                        save_command_history(command_history)
+                        iteration += 1
+                        continue
+
+                    # Update the last_inspected_files
+                    last_inspected_files = inspect_files
+
                     for file_path in inspect_files:
                         if not os.path.exists(file_path):
                             error_msg = f"Error: File not found: {file_path}"
@@ -1639,6 +1670,7 @@ def test_and_debug_mode(llm_client):
                     """
 
                     analysis = llm_client.generate_response(inspection_prompt, 4000)
+                    previous_action_analysis = analysis
                     print(f"Files analysis:\n{analysis}")
 
                     # for file_path, content in file_contents.items():
@@ -1855,7 +1887,7 @@ def test_and_debug_mode(llm_client):
                 changes_prompt = f"""
                 You are a professional software architect and developer.
 
-                You inspected multiple files and rewrote one of them. 
+                You inspected multiple files and modified one of them. 
 
                 Reason given for this action: {reason}
 
@@ -1872,6 +1904,7 @@ def test_and_debug_mode(llm_client):
                 This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less:
                 """
                 changes_summary = llm_client.generate_response(changes_prompt, 1000)
+                previous_action_analysis = changes_summary
                 print(f"Changes summary:\n{changes_summary}")
                 
                 technical_brief = update_technical_brief(write_file, new_content, iteration, mode="test", test_info=changes_summary)
@@ -1900,9 +1933,10 @@ def test_and_debug_mode(llm_client):
                 update_test_progress(completed_test=action, current_step=f"Executed raw command: {action}")
 
                 command_entry["output"] = output[:12000] if len(output) < 12000 else "Output truncated due to length"
+                previous_action_analysis = output
                 command_entry["success"] = success
 
-            elif action.upper().startswith("INDEF:") or action.upper().startswith("CHECK:"):
+            elif action.upper().startswith("INDEF:"):
                 print(f"\nExecuting command: {action}")
                 output, success = execute_command(action)
                 print(f"Command output:\n{output}")
@@ -1911,25 +1945,31 @@ def test_and_debug_mode(llm_client):
                 command_entry["output"] = output[:12000] if len(output) < 12000 else "Output truncated due to length"
                 command_entry["success"] = success
 
-                # Analysis step for CHECK commands
-                if action.upper().startswith("CHECK:"):
-                    analysis_prompt = f"""
-                    {prompt}
+                previous_action_analysis = output
 
-                    You requested to check this command: {action}.
+            # Analysis step for CHECK commands
+            elif action.upper().startswith("CHECK:"):
+                print(f"\nChecking: {action}")
+                output, success = execute_command(action)
+                analysis_prompt = f"""
+                {prompt}
 
-                    You gave this reason: {reason}
+                You requested to check this command: {action}.
 
-                    You set these goals: {goals}
+                You gave this reason: {reason}
 
-                    Check result:
-                    {output}
+                You set these goals: {goals}
 
-                    This is for the result section of this command. Analyze the check result and determine if further action is needed. Respond in 100 words or less:
-                    """
-                    analysis = llm_client.generate_response(analysis_prompt, 1000)
-                    print(f"Check analysis:\n{analysis}")
-                    command_entry["analysis"] = analysis
+                Check result:
+                {output}
+
+                This is for the result section of this command. Analyze the check result and determine if further action is needed. Respond in 100 words or less:
+                """
+                analysis = llm_client.generate_response(analysis_prompt, 1000)
+
+                previous_action_analysis = analysis
+                print(f"Check analysis:\n{analysis}")
+                command_entry["analysis"] = analysis
             
             elif action.upper().startswith("RESTART:"):
                 cmd = action.split(":", 1)[1].strip()
