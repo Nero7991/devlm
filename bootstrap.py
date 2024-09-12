@@ -345,6 +345,8 @@ Current Project Structure:
 Project Summary:
 {project_summary}
 
+Administrator notes: {read_chat_file()}
+
 Please provide your suggested project structure as a JSON object, following this format:
 {{
     "directory_name": ["file1.ext", "file2.ext"],
@@ -731,6 +733,7 @@ def inspect_file_with_approval(file_path):
         return f"Error inspecting file: {str(e)}"
 
 ALLOWED_COMMANDS = [
+    'cd',
     'python3',
     'go run',
     'go test',
@@ -786,13 +789,12 @@ def update_test_progress(completed_test=None, current_step=None):
 running_processes = []
 
 def check_all_processes():
+    global running_processes
     for process_info in running_processes[:]:  # Iterate over a copy of the list
-        status, output = check_process_output(process_info["cmd"])
-        if output:
-            print(f"New output from '{process_info['cmd']}':\n{output}")
-        if "has terminated" in status:
-            print(status)
-            # The process will be removed in check_process_output, so we don't need to do it here
+        process = process_info["process"]
+        if process.poll() is not None:
+            print(f"Process '{process_info['cmd']}' has terminated.")
+            running_processes.remove(process_info)
 
 def get_running_processes_info():
     return [{"cmd": p["cmd"]} for p in running_processes]
@@ -800,47 +802,60 @@ def get_running_processes_info():
 def kill_all_processes():
     for process_info in running_processes:
         try:
-            os.killpg(os.getpgid(process_info['process'].pid), signal.SIGTERM)
-            print(f"Terminated process group: {process_info['cmd']}")
+            process_info["process"].kill()
+            print(f"Terminated process: {process_info['cmd']}")
         except Exception as e:
-            print(f"Error terminating process group {process_info['cmd']}: {str(e)}")
+            print(f"Error terminating process {process_info['cmd']}: {str(e)}")
     running_processes.clear()
 
-atexit.register(kill_all_processes)
+def cleanup_processes():
+    global running_processes
+    for process_info in running_processes:
+        try:
+            print(f"Terminating process: {process_info['cmd']} (PID: {process_info['pid']})")
+            process_info['process'].terminate()
+            process_info['process'].wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            print(f"Force killing process: {process_info['cmd']} (PID: {process_info['pid']})")
+            process_info['process'].kill()
+    running_processes.clear()
+
+atexit.register(cleanup_processes)
 
 process_initial_outputs = {}
 
-import queue
-import psutil
-
-def check_and_terminate_existing_process(command):
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-        try:
-            # Check if the command matches (excluding the python interpreter if present)
-            cmdline = proc.info['cmdline']
-            if cmdline and command in ' '.join(cmdline):
-                print(f"Process '{command}' is already running. Terminating it.")
-                parent = psutil.Process(proc.info['pid'])
-                for child in parent.children(recursive=True):
-                    child.terminate()
-                parent.terminate()
-                parent.wait(5)  # Wait for up to 5 seconds
-                if parent.is_running():
-                    print(f"Process didn't terminate gracefully. Forcing...")
-                    parent.kill()
-                    parent.wait(2)
-                time.sleep(2)  # Wait for 2 seconds to ensure the port is released
-                return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
-    return False
-
 def run_continuous_process(command):
-    check_and_terminate_existing_process(command)
+    global running_processes
 
-    # Start the new process in its own process group
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                               universal_newlines=True, preexec_fn=os.setpgrp)
+    # Split the command into parts
+    cmd_parts = command.split('&&')
+    
+    # Determine the target directory
+    target_dir = os.getcwd()
+    if cmd_parts[0].strip().startswith('cd '):
+        target_dir = os.path.abspath(cmd_parts[0].strip().split(' ', 1)[1])
+        cmd_parts = cmd_parts[1:]  # Remove the cd command
+
+    # Join the remaining parts of the command
+    final_command = ' && '.join(cmd_parts).strip()
+
+    # Check for existing processes in the same directory
+    for proc in running_processes[:]:  # Iterate over a copy
+        if proc['cwd'] == target_dir and proc['cmd'].endswith(final_command):
+            print(f"Terminating existing process (PID {proc['pid']}) in {target_dir}")
+            try:
+                proc['process'].terminate()
+                proc['process'].wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc['process'].kill()
+            running_processes.remove(proc)
+
+    # Change to the target directory
+    original_dir = os.getcwd()
+    os.chdir(target_dir)
+
+    # Start the new process
+    process = subprocess.Popen(final_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
     output_queue = queue.Queue()
     
     def enqueue_output(out, queue):
@@ -851,25 +866,31 @@ def run_continuous_process(command):
     threading.Thread(target=enqueue_output, args=(process.stdout, output_queue), daemon=True).start()
     threading.Thread(target=enqueue_output, args=(process.stderr, output_queue), daemon=True).start()
     
-    # Remove any old entries with the same command
-    global running_processes
-    running_processes = [p for p in running_processes if p['cmd'] != command]
-    
     # Add the new process to the list
-    running_processes.append({"cmd": command, "process": process, "queue": output_queue})
+    running_processes.append({
+        "cmd": command,
+        "process": process,
+        "queue": output_queue,
+        "pid": process.pid,
+        "cwd": target_dir
+    })
     
-    # Wait for 10 seconds and collect initial output
-    time.sleep(10)
+    # Wait for 30 seconds and collect initial output
+    time.sleep(30)
     initial_output = ""
     while not output_queue.empty():
         initial_output += output_queue.get_nowait()
+
+    # Store the initial output
+    process_initial_outputs[command] = initial_output
+
+    # Change back to the original directory
+    os.chdir(original_dir)
     
-    # Keep only the last 2000 characters of the initial output
-    initial_output = initial_output[-2000:]
-    
-    return f"Started new process: {command}\nInitial output:\n{initial_output}"
+    return f"Started new process: {command} (PID: {process.pid})\nInitial output:\n{initial_output}"
 
 def check_process_output(command):
+    global running_processes, process_initial_outputs
     for process_info in running_processes:
         if process_info["cmd"] == command:
             process = process_info["process"]
@@ -877,51 +898,59 @@ def check_process_output(command):
             
             if process.poll() is not None:
                 running_processes.remove(process_info)
-                return f"Process '{command}' has terminated.", ""
+                return f"Process '{command}' (PID: {process_info['pid']}) has terminated."
+            
+            # Change to the process's working directory
+            original_dir = os.getcwd()
+            os.chdir(process_info["cwd"])
             
             output = ""
             while not output_queue.empty():
-                try:
-                    output += output_queue.get_nowait()
-                except queue.Empty:
-                    break
+                output += output_queue.get_nowait()
             
-            # Keep only the last 2000 characters
-            output = output[-2000:]
+            # Change back to the original directory
+            os.chdir(original_dir)
             
-            return f"Process '{command}' is running.", output
+            if output:
+                return output
+            else:
+                initial_output = process_initial_outputs.get(command, "")
+                return f"No new output since last check for process (PID: {process_info['pid']}). Here's the initial output for reference:\n{initial_output}"
     
-    return f"No running process found for command: {command}", ""
+    return f"No running process found for command: {command}"
 
-def restart_process(cmd):
+def restart_process(command):
     global running_processes
     process_found = False
-    for process_info in running_processes:
-        if process_info['cmd'] == cmd:
+    for process_info in running_processes[:]:  # Iterate over a copy
+        if process_info['cmd'] == command:
             process_found = True
             try:
-                process_info['thread'].join(timeout=5)
-            except Exception as e:
-                print(f"Error terminating process {cmd}: {str(e)}")
+                process_info['process'].terminate()
+                process_info['process'].wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process_info['process'].kill()
             running_processes.remove(process_info)
-            print(f"Process '{cmd}' has been terminated.")
+            print(f"Process '{command}' (PID: {process_info['pid']}) has been terminated.")
             break
     
     if not process_found:
-        print(f"Process '{cmd}' was not running.")
+        print(f"Process '{command}' was not running.")
     
     # Start the process in the background
-    print(f"Starting process '{cmd}' in the background.")
-    output = run_continuous_process(cmd)
+    print(f"Starting process '{command}' in the background.")
+    output = run_continuous_process(command)
     
-    return f"Process '{cmd}' has been restarted. Initial output:\n{output}"
+    return f"Process '{command}' has been restarted. {output}"
 
 command_decisions = {}
 
-def execute_command(command, timeout=600):  # 600 seconds = 10 minutes
+def execute_command(command, timeout=600):
     global command_decisions
-
-    if command.upper().startswith("INDEF:"):
+    if command.upper().startswith("EXPORT "):
+        variable, value = command[7:].split('=', 1)
+        return set_environment_variable(variable.strip(), value.strip())
+    elif command.upper().startswith("INDEF:"):
         cmd = command.split(":", 1)[1].strip()
         output = run_continuous_process(cmd)
         return output, True
@@ -936,6 +965,9 @@ def execute_command(command, timeout=600):  # 600 seconds = 10 minutes
         
         return execute_command_with_timeout(raw_command, timeout)
     else:
+        if "&&" in command:
+            return execute_compound_command(command, timeout)
+        
         if "go run" in command and command not in command_decisions:
             suggestion = (
                 "This command appears to start a long-running process (like an API server). "
@@ -946,7 +978,6 @@ def execute_command(command, timeout=600):  # 600 seconds = 10 minutes
             return suggestion, True
 
         if command in command_decisions and command_decisions[command] == "suggested_indef":
-            # LLM has decided to run it again, so mark it as not indefinite
             command_decisions[command] = "not_indefinite"
         
         if any(command.startswith(cmd) for cmd in APPROVAL_REQUIRED_COMMANDS):
@@ -954,35 +985,72 @@ def execute_command(command, timeout=600):  # 600 seconds = 10 minutes
                 return "Command not approved by user.", False
         
         return execute_command_with_timeout(command, timeout)
+    
+def set_environment_variable(variable, value):
+    os.environ[variable] = value
+    return f"Environment variable {variable} set to {value}", True
+    
+def execute_compound_command(command, timeout=600):
+    commands = command.split('&&')
+    output = ""
+    success = True
+    current_dir = os.getcwd()
+
+    for cmd in commands:
+        cmd = cmd.strip()
+        if cmd.startswith('cd '):
+            # Change directory
+            new_dir = cmd.split(' ', 1)[1]
+            try:
+                os.chdir(new_dir)
+                output += f"Changed directory to {os.getcwd()}\n"
+            except FileNotFoundError:
+                output += f"Error: Directory '{new_dir}' not found\n"
+                success = False
+                break
+        else:
+            # Execute the command
+            cmd_output, cmd_success = execute_command_with_timeout(cmd, timeout)
+            output += cmd_output + "\n"
+            success = success and cmd_success
+            if not cmd_success:
+                break
+
+    # Restore the original directory
+    os.chdir(current_dir)
+    return output, success
 
 def execute_command_with_timeout(command, timeout):
-    process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-    
-    def target():
-        nonlocal process
-        process.communicate()
-    
-    thread = threading.Thread(target=target)
-    thread.start()
-    thread.join(timeout)
-    
-    if thread.is_alive():
-        process.terminate()
-        thread.join()
-        return (f"Command execution timed out after {timeout} seconds. "
-                f"This might be an indefinite process (consider using INDEF action) "
-                f"or a long process (consider running again as some of it might have completed). "
-                f"The process has been terminated to progress the project development.", False)
-    
-    stdout, stderr = process.communicate()
-    return_code = process.returncode
-    
-    full_output = f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
-    
-    if return_code != 0:
-        return f"Error (code {return_code}):\n{full_output}", False
-    else:
-        return full_output.strip(), True
+    try:
+        process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        
+        def target():
+            nonlocal process
+            process.communicate()
+        
+        thread = threading.Thread(target=target)
+        thread.start()
+        thread.join(timeout)
+        
+        if thread.is_alive():
+            process.terminate()
+            thread.join()
+            return (f"Command execution timed out after {timeout} seconds. "
+                    f"This might be an indefinite process (consider using INDEF action) "
+                    f"or a long process (consider running again as some of it might have completed). "
+                    f"The process has been terminated to progress the project development.", False)
+        
+        stdout, stderr = process.communicate()
+        return_code = process.returncode
+        
+        full_output = f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+        
+        if return_code != 0:
+            return f"Error (code {return_code}):\n{full_output}", False
+        else:
+            return full_output.strip(), True
+    except FileNotFoundError:
+        return f"Error: Command '{command.split()[0]}' not found. Please ensure it's installed and in your PATH.", False
 
 def compare_and_write(file_path, new_content):
     try:
@@ -1015,31 +1083,32 @@ def compare_and_write(file_path, new_content):
 def check_environment(command):
     print("Checking environment...")
     
-    # Check current directory
     current_dir = os.getcwd()
     print(f"Current directory: {current_dir}")
     
-    # Check if we're in the project root (you might want to adjust this check)
     if not os.path.exists("go.mod"):
         print("Warning: go.mod not found. We might not be in the project root.")
     
-    # Check command installation
-    cmd = command.split()[0]  # Get the main command (e.g., 'go' from 'go test ./...')
+    cmd = command.split()[0]
     version_flag = "--version"
     if cmd == "python" or cmd == "python3":
         version_flag = "-V"
-    # if cmd has "go" in it, then we are checking the version of go
     if "go" in cmd:
         version_flag = "version"
     
     version_command = f"{cmd} {version_flag}"
-    output, success = execute_command(version_command)
-    if success:
-        print(f"{cmd.capitalize()} version: {output}")
-        return success, "success"
-    else:
-        print(f"Error: {output}")
-        return success, output
+    try:
+        output, success = execute_command(version_command)
+        if success:
+            print(f"{cmd.capitalize()} version: {output}")
+            return success, "success"
+        else:
+            print(f"Error: {output}")
+            return success, output
+    except FileNotFoundError:
+        error_msg = f"Error: {cmd} command not found. Please ensure it's installed and in your PATH."
+        print(error_msg)
+        return False, error_msg
 
 
 def modify_file(file_path, content):
@@ -1518,18 +1587,6 @@ def test_and_debug_mode(llm_client):
 
         last_10_iterations = get_last_10_iterations(command_history)
 
-        # Collect information about running processes and their latest output
-        process_status = []
-        process_outputs = []
-        for process_info in running_processes[:]:  # Use a copy of the list to safely modify it
-            status, output = check_process_output(process_info["cmd"])
-            if "has terminated" in status:
-                print(status)
-                continue  # Skip terminated processes
-            process_status.append(status)
-            if output:
-                process_outputs.append(f"Latest output from '{process_info['cmd']}':\n{output[-2000:]}")
-
         prompt = f"""
         You are in test and debug mode for the project. You are a professional software architect and developer. Adhere to the directives, best practices and provide accurate responses based on the project context. You can refer to the project summary, technical brief, and project structure for information.
 
@@ -1549,12 +1606,6 @@ def test_and_debug_mode(llm_client):
 
         {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
 
-        Process Status:
-        {', '.join(process_status)}
-
-        Latest Process Outputs:
-        {', '.join(process_outputs) if process_outputs else "No new output from background processes."}
-
         Directives:
         CRITICAL: Use the command history (especially the previous command) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
         0. Follow a continuous development, integration, and testing workflow. Do This includes writing code, testing, debugging, and fixing issues.
@@ -1565,7 +1616,7 @@ def test_and_debug_mode(llm_client):
         4. Use the files in the project structure to understand the context and provide accurate responses. Do not add new files.
         5. Make sure that we're making progress with each step. If we go around in circles, assume that debug is wrong and start from the beginning.
         6. Do not repeat the same action multiple times unless absolutely necessary.
-        7. RESTART a process after making changes to the code. This is crucial for the changes to take effect.
+        7. You cannot use any one action more than once in a row.
          
         You can take the following actions:
 
@@ -1579,6 +1630,17 @@ def test_and_debug_mode(llm_client):
         8. Restart a running process with "RESTART: <command>"
         9. Finish testing by replying with "DONE"
 
+        """
+        if running_processes:
+            prompt_prcoesses = f"""
+            Currently Running Processes:
+            {json.dumps([{'cmd': p['cmd']} for p in running_processes], indent=2)}
+            """
+        else:
+            prompt_prcoesses = "\nNo processes currently running."
+
+        prompt_extension = f"""
+
         Provide your response in the following format:
         ACTION: <your chosen action>
         GOALS: <Context for the goals are when your executing the command>
@@ -1587,10 +1649,10 @@ def test_and_debug_mode(llm_client):
         What would you like to do next to progress towards project completion?
         """
 
-        # if running_processes:
-        #     final_prompt = prompt + prompt_prcoesses + prompt_extension
-        # else:
-        final_prompt = prompt # + prompt_extension
+        if running_processes:
+            final_prompt = prompt + prompt_prcoesses + prompt_extension
+        else:
+            final_prompt = prompt + prompt_extension
 
         HasUserInterrupted = False
         previous_action_analysis = None
@@ -1993,9 +2055,9 @@ def test_and_debug_mode(llm_client):
                 command_entry["result"] = {"restart_output": output}
 
             elif action.upper().startswith("RUN:"):
-                action = action[4:].strip()            
-                if any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS):
-                    env_check, env_output = check_environment(action)
+                action = action[4:].strip()
+                if any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS) or '&&' in action:
+                    env_check, env_output = check_environment(action.split('&&')[-1].strip())  # Check environment for the last command in the chain
                     if env_check:
                         print(f"\nExecuting command: {action}")
                         output, success = execute_command(action)
@@ -2125,7 +2187,7 @@ def generate():
                     shutil.copy("project_structure.json", "project_structure_backup.json")
                 
                 # List of files to preserve
-                preserve_files = ["bootstrap.py", "project_summary.md", "project_structure.json"]
+                preserve_files = ["bootstrap.py", "project_summary.md", "project_structure.json", "chat.txt"]
                 
                 # Remove old structure
                 remove_old_structure(preserve_files)
@@ -2159,7 +2221,7 @@ def generate():
     all_done = False
 
     # List of files to preserve and not regenerate
-    preserve_files = ["bootstrap.py", "project_summary.md", "project_structure.json"]
+    preserve_files = ["bootstrap.py", "project_summary.md", "project_structure.json", "chat.txt"]
 
     while not all_done and current_iteration < max_iterations:
         current_iteration += 1
