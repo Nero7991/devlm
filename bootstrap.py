@@ -786,12 +786,13 @@ def update_test_progress(completed_test=None, current_step=None):
 running_processes = []
 
 def check_all_processes():
-    global running_processes
     for process_info in running_processes[:]:  # Iterate over a copy of the list
-        process = process_info["process"]
-        if process.poll() is not None:
-            print(f"Process '{process_info['cmd']}' has terminated.")
-            running_processes.remove(process_info)
+        status, output = check_process_output(process_info["cmd"])
+        if output:
+            print(f"New output from '{process_info['cmd']}':\n{output}")
+        if "has terminated" in status:
+            print(status)
+            # The process will be removed in check_process_output, so we don't need to do it here
 
 def get_running_processes_info():
     return [{"cmd": p["cmd"]} for p in running_processes]
@@ -799,18 +800,20 @@ def get_running_processes_info():
 def kill_all_processes():
     for process_info in running_processes:
         try:
-            process_info["process"].kill()
-            print(f"Terminated process: {process_info['cmd']}")
+            os.killpg(os.getpgid(process_info['process'].pid), signal.SIGTERM)
+            print(f"Terminated process group: {process_info['cmd']}")
         except Exception as e:
-            print(f"Error terminating process {process_info['cmd']}: {str(e)}")
+            print(f"Error terminating process group {process_info['cmd']}: {str(e)}")
     running_processes.clear()
 
 atexit.register(kill_all_processes)
 
 process_initial_outputs = {}
 
-def run_continuous_process(command):
-    # Check if the process is already running at the system level
+import queue
+import psutil
+
+def check_and_terminate_existing_process(command):
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
             # Check if the command matches (excluding the python interpreter if present)
@@ -826,12 +829,18 @@ def run_continuous_process(command):
                     print(f"Process didn't terminate gracefully. Forcing...")
                     parent.kill()
                     parent.wait(2)
-                break
+                time.sleep(2)  # Wait for 2 seconds to ensure the port is released
+                return True
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
+    return False
 
-    # Start the new process
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+def run_continuous_process(command):
+    check_and_terminate_existing_process(command)
+
+    # Start the new process in its own process group
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                               universal_newlines=True, preexec_fn=os.setpgrp)
     output_queue = queue.Queue()
     
     def enqueue_output(out, queue):
@@ -849,20 +858,18 @@ def run_continuous_process(command):
     # Add the new process to the list
     running_processes.append({"cmd": command, "process": process, "queue": output_queue})
     
-    # Wait for 30 seconds and collect initial output
-    time.sleep(30)
+    # Wait for 10 seconds and collect initial output
+    time.sleep(10)
     initial_output = ""
-    global process_initial_outputs
     while not output_queue.empty():
         initial_output += output_queue.get_nowait()
-
-        # Store the initial output
-    process_initial_outputs[command] = initial_output   
+    
+    # Keep only the last 2000 characters of the initial output
+    initial_output = initial_output[-2000:]
     
     return f"Started new process: {command}\nInitial output:\n{initial_output}"
 
 def check_process_output(command):
-    global running_processes, process_initial_outputs
     for process_info in running_processes:
         if process_info["cmd"] == command:
             process = process_info["process"]
@@ -870,43 +877,44 @@ def check_process_output(command):
             
             if process.poll() is not None:
                 running_processes.remove(process_info)
-                return f"Process '{command}' has terminated."
+                return f"Process '{command}' has terminated.", ""
             
             output = ""
             while not output_queue.empty():
-                output += output_queue.get_nowait()
+                try:
+                    output += output_queue.get_nowait()
+                except queue.Empty:
+                    break
             
-            if output:
-                return output
-            else:
-                initial_output = process_initial_outputs.get(command, "")
-                return f"No new output since last check. Here's the initial output for reference:\n{initial_output}"
+            # Keep only the last 2000 characters
+            output = output[-2000:]
+            
+            return f"Process '{command}' is running.", output
     
-    return f"No running process found for command: {command}"
+    return f"No running process found for command: {command}", ""
 
-def restart_process(command):
+def restart_process(cmd):
     global running_processes
     process_found = False
     for process_info in running_processes:
-        if process_info['cmd'] == command:
+        if process_info['cmd'] == cmd:
             process_found = True
             try:
-                process_info['process'].terminate()
-                process_info['process'].wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process_info['process'].kill()
+                process_info['thread'].join(timeout=5)
+            except Exception as e:
+                print(f"Error terminating process {cmd}: {str(e)}")
             running_processes.remove(process_info)
-            print(f"Process '{command}' has been terminated.")
+            print(f"Process '{cmd}' has been terminated.")
             break
     
     if not process_found:
-        print(f"Process '{command}' was not running.")
+        print(f"Process '{cmd}' was not running.")
     
     # Start the process in the background
-    print(f"Starting process '{command}' in the background.")
-    output, success = execute_command(f"INDEF:{command}")
+    print(f"Starting process '{cmd}' in the background.")
+    output = run_continuous_process(cmd)
     
-    return f"Process '{command}' has been restarted. Initial output:\n{output}"
+    return f"Process '{cmd}' has been restarted. Initial output:\n{output}"
 
 command_decisions = {}
 
@@ -1095,7 +1103,7 @@ def load_command_history():
 
 def extract_content(response_text, file_path):
     # Print the response text (for debugging)  
-    print(f"Response text for {file_path}:\n{response_text}")
+    # print(f"Response text for {file_path}:\n{response_text}")
 
     file_extension = os.path.splitext(file_path)[1].lower()
 
@@ -1510,6 +1518,18 @@ def test_and_debug_mode(llm_client):
 
         last_10_iterations = get_last_10_iterations(command_history)
 
+        # Collect information about running processes and their latest output
+        process_status = []
+        process_outputs = []
+        for process_info in running_processes[:]:  # Use a copy of the list to safely modify it
+            status, output = check_process_output(process_info["cmd"])
+            if "has terminated" in status:
+                print(status)
+                continue  # Skip terminated processes
+            process_status.append(status)
+            if output:
+                process_outputs.append(f"Latest output from '{process_info['cmd']}':\n{output[-2000:]}")
+
         prompt = f"""
         You are in test and debug mode for the project. You are a professional software architect and developer. Adhere to the directives, best practices and provide accurate responses based on the project context. You can refer to the project summary, technical brief, and project structure for information.
 
@@ -1529,6 +1549,12 @@ def test_and_debug_mode(llm_client):
 
         {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
 
+        Process Status:
+        {', '.join(process_status)}
+
+        Latest Process Outputs:
+        {', '.join(process_outputs) if process_outputs else "No new output from background processes."}
+
         Directives:
         CRITICAL: Use the command history (especially the previous command) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
         0. Follow a continuous development, integration, and testing workflow. Do This includes writing code, testing, debugging, and fixing issues.
@@ -1539,7 +1565,7 @@ def test_and_debug_mode(llm_client):
         4. Use the files in the project structure to understand the context and provide accurate responses. Do not add new files.
         5. Make sure that we're making progress with each step. If we go around in circles, assume that debug is wrong and start from the beginning.
         6. Do not repeat the same action multiple times unless absolutely necessary.
-        7. You cannot use any one action more than once in a row.
+        7. RESTART a process after making changes to the code. This is crucial for the changes to take effect.
          
         You can take the following actions:
 
@@ -1553,17 +1579,6 @@ def test_and_debug_mode(llm_client):
         8. Restart a running process with "RESTART: <command>"
         9. Finish testing by replying with "DONE"
 
-        """
-        if running_processes:
-            prompt_prcoesses = f"""
-            Currently Running Processes:
-            {json.dumps([{'cmd': p['cmd']} for p in running_processes], indent=2)}
-            """
-        else:
-            prompt_prcoesses = "\nNo processes currently running."
-
-        prompt_extension = f"""
-
         Provide your response in the following format:
         ACTION: <your chosen action>
         GOALS: <Context for the goals are when your executing the command>
@@ -1572,10 +1587,10 @@ def test_and_debug_mode(llm_client):
         What would you like to do next to progress towards project completion?
         """
 
-        if running_processes:
-            final_prompt = prompt + prompt_prcoesses + prompt_extension
-        else:
-            final_prompt = prompt + prompt_extension
+        # if running_processes:
+        #     final_prompt = prompt + prompt_prcoesses + prompt_extension
+        # else:
+        final_prompt = prompt # + prompt_extension
 
         HasUserInterrupted = False
         previous_action_analysis = None
