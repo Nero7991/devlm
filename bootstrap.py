@@ -1576,7 +1576,7 @@ def test_and_debug_mode(llm_client):
 
     while True:
         # Check for chat updates at the start of each iteration
-        check_all_processes()
+        # check_all_processes()
 
         if HasUserInterrupted:
             user_suggestion = handle_user_suggestion()
@@ -1664,6 +1664,9 @@ def test_and_debug_mode(llm_client):
 
         HasUserInterrupted = False
         previous_action_analysis = None
+
+        # For debug, print the process outputs been provided
+        print(f"Process outputs for debug: {process_outputs}")
         
         print(f"\nGenerating next step (Iteration {iteration})...")
         # Print the prompt for the user
