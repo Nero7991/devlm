@@ -740,6 +740,7 @@ ALLOWED_COMMANDS = [
     'go mod tidy',
     'curl',
     'wget',
+    'cd',
     # Add more commands as needed
 ]
 
@@ -797,6 +798,7 @@ def check_all_processes():
 def get_running_processes_info():
     return [{"cmd": p["cmd"]} for p in running_processes]
 
+# Update the kill_all_processes function
 def kill_all_processes():
     for process_info in running_processes:
         try:
@@ -813,13 +815,31 @@ process_initial_outputs = {}
 import queue
 import psutil
 
+def parse_compound_command(command):
+    parts = command.split('&&')
+    cd_part = None
+    run_part = None
+    for part in parts:
+        part = part.strip()
+        if part.startswith('cd '):
+            cd_part = part
+        else:
+            run_part = part
+    return cd_part, run_part
+
+def get_process_key(command):
+    _, run_part = parse_compound_command(command)
+    return run_part.split()[-1] if run_part else command.split()[-1]
+
 def check_and_terminate_existing_process(command):
+    cd_part, run_part = parse_compound_command(command)
+    process_key = get_process_key(command)
+    
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
-            # Check if the command matches (excluding the python interpreter if present)
             cmdline = proc.info['cmdline']
-            if cmdline and command in ' '.join(cmdline):
-                print(f"Process '{command}' is already running. Terminating it.")
+            if cmdline and process_key in ' '.join(cmdline):
+                print(f"Process '{process_key}' is already running. Terminating it.")
                 parent = psutil.Process(proc.info['pid'])
                 for child in parent.children(recursive=True):
                     child.terminate()
@@ -838,8 +858,17 @@ def check_and_terminate_existing_process(command):
 def run_continuous_process(command):
     check_and_terminate_existing_process(command)
 
+    cd_part, run_part = parse_compound_command(command)
+    cwd = os.getcwd()
+    
+    if cd_part:
+        target_dir = cd_part.split(None, 1)[1]
+        os.chdir(target_dir)
+    
+    run_command = run_part if run_part else command
+    
     # Start the new process in its own process group
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+    process = subprocess.Popen(shlex.split(run_command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
                                universal_newlines=True, preexec_fn=os.setpgrp)
     output_queue = queue.Queue()
     
@@ -856,7 +885,13 @@ def run_continuous_process(command):
     running_processes = [p for p in running_processes if p['cmd'] != command]
     
     # Add the new process to the list
-    running_processes.append({"cmd": command, "process": process, "queue": output_queue})
+    running_processes.append({
+        "cmd": command,
+        "process": process,
+        "queue": output_queue,
+        "cwd": cwd,
+        "run_command": run_command
+    })
     
     # Wait for 10 seconds and collect initial output
     time.sleep(10)
@@ -867,11 +902,15 @@ def run_continuous_process(command):
     # Keep only the last 2000 characters of the initial output
     initial_output = initial_output[-2000:]
     
+    # Change back to the original directory
+    os.chdir(cwd)
+    
     return f"Started new process: {command}\nInitial output:\n{initial_output}"
 
 def check_process_output(command):
+    process_key = get_process_key(command)
     for process_info in running_processes:
-        if process_info["cmd"] == command:
+        if process_key in process_info["cmd"]:
             process = process_info["process"]
             output_queue = process_info["queue"]
             
@@ -895,12 +934,14 @@ def check_process_output(command):
 
 def restart_process(cmd):
     global running_processes
+    process_key = get_process_key(cmd)
     process_found = False
     for process_info in running_processes:
-        if process_info['cmd'] == cmd:
+        if process_key in process_info['cmd']:
             process_found = True
             try:
-                process_info['thread'].join(timeout=5)
+                os.killpg(os.getpgid(process_info['process'].pid), signal.SIGTERM)
+                process_info['process'].wait(timeout=5)
             except Exception as e:
                 print(f"Error terminating process {cmd}: {str(e)}")
             running_processes.remove(process_info)
@@ -918,7 +959,7 @@ def restart_process(cmd):
 
 command_decisions = {}
 
-def execute_command(command, timeout=600):  # 600 seconds = 10 minutes
+def execute_command(command, timeout=600):
     global command_decisions
 
     if command.upper().startswith("INDEF:"):
@@ -936,6 +977,9 @@ def execute_command(command, timeout=600):  # 600 seconds = 10 minutes
         
         return execute_command_with_timeout(raw_command, timeout)
     else:
+        if command.upper().startswith("RUN:"):
+            command = command[4:].strip()
+
         if "go run" in command and command not in command_decisions:
             suggestion = (
                 "This command appears to start a long-running process (like an API server). "
@@ -946,7 +990,6 @@ def execute_command(command, timeout=600):  # 600 seconds = 10 minutes
             return suggestion, True
 
         if command in command_decisions and command_decisions[command] == "suggested_indef":
-            # LLM has decided to run it again, so mark it as not indefinite
             command_decisions[command] = "not_indefinite"
         
         if any(command.startswith(cmd) for cmd in APPROVAL_REQUIRED_COMMANDS):
@@ -956,33 +999,56 @@ def execute_command(command, timeout=600):  # 600 seconds = 10 minutes
         return execute_command_with_timeout(command, timeout)
 
 def execute_command_with_timeout(command, timeout):
-    process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    # Split the command into parts
+    command_parts = command.split('&&')
     
-    def target():
-        nonlocal process
-        process.communicate()
-    
-    thread = threading.Thread(target=target)
-    thread.start()
-    thread.join(timeout)
-    
-    if thread.is_alive():
-        process.terminate()
-        thread.join()
-        return (f"Command execution timed out after {timeout} seconds. "
-                f"This might be an indefinite process (consider using INDEF action) "
-                f"or a long process (consider running again as some of it might have completed). "
-                f"The process has been terminated to progress the project development.", False)
-    
-    stdout, stderr = process.communicate()
-    return_code = process.returncode
-    
-    full_output = f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
-    
+    # Initialize variables
+    current_dir = os.getcwd()
+    output = ""
+    return_code = 0
+
+    try:
+        for part in command_parts:
+            part = part.strip()
+            if part.startswith('cd '):
+                # Change directory
+                new_dir = part.split(None, 1)[1]
+                try:
+                    os.chdir(new_dir)
+                    output += f"Changed directory to {new_dir}\n"
+                except FileNotFoundError:
+                    output += f"Error: Directory '{new_dir}' not found\n"
+                    return_code = 1
+                    break
+            else:
+                # Execute the command
+                try:
+                    process = subprocess.Popen(shlex.split(part), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+                    stdout, stderr = process.communicate(timeout=timeout)
+                    return_code = process.returncode
+                    output += f"Command: {part}\n"
+                    output += f"STDOUT:\n{stdout}\n"
+                    output += f"STDERR:\n{stderr}\n"
+                    if return_code != 0:
+                        output += f"Command failed with return code {return_code}\n"
+                        break
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    output += f"Command execution timed out after {timeout} seconds.\n"
+                    return_code = -1
+                    break
+                except FileNotFoundError:
+                    output += f"Error: Command '{part.split()[0]}' not found\n"
+                    return_code = 1
+                    break
+    finally:
+        # Always change back to the original directory
+        os.chdir(current_dir)
+
     if return_code != 0:
-        return f"Error (code {return_code}):\n{full_output}", False
+        return output, False
     else:
-        return full_output.strip(), True
+        return output.strip(), True
 
 def compare_and_write(file_path, new_content):
     try:
@@ -1023,24 +1089,23 @@ def check_environment(command):
     if not os.path.exists("go.mod"):
         print("Warning: go.mod not found. We might not be in the project root.")
     
-    # Check command installation
-    cmd = command.split()[0]  # Get the main command (e.g., 'go' from 'go test ./...')
+    # Extract the main command (e.g., 'go' from 'cd devlm-identity && go test ./...')
+    main_command = command.split('&&')[-1].strip().split()[0]
+    
     version_flag = "--version"
-    if cmd == "python" or cmd == "python3":
+    if main_command == "python" or main_command == "python3":
         version_flag = "-V"
-    # if cmd has "go" in it, then we are checking the version of go
-    if "go" in cmd:
+    elif "go" in main_command:
         version_flag = "version"
     
-    version_command = f"{cmd} {version_flag}"
-    output, success = execute_command(version_command)
+    version_command = f"{main_command} {version_flag}"
+    output, success = execute_command_with_timeout(version_command, timeout=10)
     if success:
-        print(f"{cmd.capitalize()} version: {output}")
+        print(f"{main_command.capitalize()} version: {output}")
         return success, "success"
     else:
         print(f"Error: {output}")
         return success, output
-
 
 def modify_file(file_path, content):
     with open(file_path, 'w') as f:
@@ -1391,21 +1456,26 @@ def update_project_structure(file_path):
     with open('project_structure.json', 'r') as f:
         project_structure = json.load(f)
     
+    # Split the file path into components
     path_parts = file_path.split(os.sep)
-    current_level = project_structure
     
-    for part in path_parts[:-1]:
-        if part not in current_level:
-            current_level[part] = {}
-        current_level = current_level[part]
+    # Identify the top-level project (e.g., "devlm-identity" or "devlm-core")
+    project = path_parts[0]
     
-    if isinstance(current_level, dict):
-        if path_parts[-1] not in current_level:
-            current_level[path_parts[-1]] = []
-    elif isinstance(current_level, list):
-        if path_parts[-1] not in current_level:
-            current_level.append(path_parts[-1])
+    # Find or create the project in the structure
+    if project not in project_structure:
+        project_structure[project] = []
     
+    # Check if the file already exists in the project structure
+    if file_path not in project_structure[project]:
+        # Add the full file path to the project list
+        project_structure[project].append(file_path)
+        
+        print(f"Updated project structure with new file: {file_path}")
+    else:
+        print(f"File {file_path} already exists in the project structure.")
+    
+    # Save the updated structure
     with open('project_structure.json', 'w') as f:
         json.dump(project_structure, f, indent=2)
     
@@ -1860,7 +1930,7 @@ def test_and_debug_mode(llm_client):
 
                 Goals for this action: {goals}
 
-                Please provide the complete updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, you must not make an unnecessary changes to the code. You must provide the full content since this is directly written to the file without processing. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
+                Please provide the complete updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, you must not make an unnecessary changes to the code. Never remove features unless specified. You must provide the full content since this is directly written to the file without processing. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
                 """
                 # Use the following format to provide changes for the file. There should be no other content in your response, only changes to the file content:
                 # - To add a line after a line number: +<line_number>:new_content
