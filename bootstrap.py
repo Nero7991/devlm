@@ -181,31 +181,61 @@ class VertexAILLM(LLMInterface):
 
     def generate_response(self, prompt: str, max_tokens: int) -> str:
         messages = [{"role": "user", "content": prompt}]
-        
-        for attempt in range(self.max_retries):
-            try:
-                response = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=max_tokens,
-                    messages=messages
-                )
-                return response.content[0].text if response.content else ""
-            except Exception as e:
-                if attempt < self.max_retries - 1:
-                    print(f"Error occurred: {str(e)}. Retrying in {self.retry_delay} seconds...")
-                    time.sleep(self.retry_delay)
-                    if self.retry_delay < 64:
-                        self.retry_delay *= 2  # Exponential backoff
-                else:
-                    print(f"Max retries reached. Error: {str(e)}")
-                    user_input = input("Do you want to try again? (yes/no): ").lower()
-                    if user_input == 'yes':
-                        self.retry_delay = 32  # Reset delay
-                        continue
-                    else:
-                        raise
+        full_response = ""
+        iteration = 0
+        max_iterations = 2  # Limit the number of iterations to prevent infinite loops
 
-        raise Exception("Failed to generate response after multiple attempts")
+        while iteration < max_iterations:
+            for attempt in range(self.max_retries):
+                try:
+                    response = self.client.messages.create(
+                        model=self.model,
+                        max_tokens=max_tokens,
+                        messages=messages
+                    )
+                    
+                    # For debugging, print the response usage
+                    if response.usage:
+                        print(f"Response usage: {response.usage}")
+                    
+                    current_output = response.content[0].text if response.content else ""
+                    full_response += current_output
+
+                    # Check if we're close to the token limit (within 5%)
+                    if response.usage and response.usage.output_tokens > 0.999 * max_tokens:
+                        print("Output close to token limit. Continuing response...")
+                        continuation_prompt = (
+                            f"{prompt}\n\n"
+                            f"Previous output (possibly incomplete):\n<<<START>>>{full_response}<<<END>>>\n\n"
+                            "The previous response was very close to the output token limit and might not have completed. "
+                            "Your previous output starts after the third greater than sign in <<<START>>> and ends at the character before the first less than sign in <<<END>>>. Please continue the output (including new line and tabs if needed), picking up where you left off without repeating information, your output will be appended without modification before first less than sign in <<<END>>>. Do not include anything other than the continuation of the output."
+                        )
+                        messages = [{"role": "user", "content": continuation_prompt}]
+                        iteration += 1
+                        break
+                    else:
+                        return full_response
+
+                except Exception as e:
+                    if attempt < self.max_retries - 1:
+                        print(f"Error occurred: {str(e)}. Retrying in {self.retry_delay} seconds...")
+                        time.sleep(self.retry_delay)
+                        if self.retry_delay < 64:
+                            self.retry_delay *= 2  # Exponential backoff
+                    else:
+                        print(f"Max retries reached. Error: {str(e)}")
+                        user_input = input("Do you want to try again? (yes/no): ").lower()
+                        if user_input == 'yes':
+                            self.retry_delay = 32  # Reset delay
+                            continue
+                        else:
+                            raise
+
+            if iteration == max_iterations:
+                print("Reached maximum number of continuation attempts.")
+                break
+
+        return full_response
 
     def switch_model(self, new_model: str):
         self.model = new_model
@@ -866,46 +896,62 @@ def run_continuous_process(command):
         os.chdir(target_dir)
     
     run_command = run_part if run_part else command
-    
-    # Start the new process in its own process group
-    process = subprocess.Popen(shlex.split(run_command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                               universal_newlines=True, preexec_fn=os.setpgrp)
-    output_queue = queue.Queue()
-    
-    def enqueue_output(out, queue):
-        for line in iter(out.readline, ''):
-            queue.put(line)
-        out.close()
-    
-    threading.Thread(target=enqueue_output, args=(process.stdout, output_queue), daemon=True).start()
-    threading.Thread(target=enqueue_output, args=(process.stderr, output_queue), daemon=True).start()
-    
-    # Remove any old entries with the same command
-    global running_processes
-    running_processes = [p for p in running_processes if p['cmd'] != command]
-    
-    # Add the new process to the list
-    running_processes.append({
-        "cmd": command,
-        "process": process,
-        "queue": output_queue,
-        "cwd": cwd,
-        "run_command": run_command
-    })
-    
-    # Wait for 10 seconds and collect initial output
-    time.sleep(10)
-    initial_output = ""
-    while not output_queue.empty():
-        initial_output += output_queue.get_nowait()
-    
-    # Keep only the last 2000 characters of the initial output
-    initial_output = initial_output[-2000:]
-    
-    # Change back to the original directory
-    os.chdir(cwd)
-    
-    return f"Started new process: {command}\nInitial output:\n{initial_output}"
+
+    try:
+        # Start the new process in its own process group
+        process = subprocess.Popen(shlex.split(run_command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                   universal_newlines=True, preexec_fn=os.setpgrp)
+        output_queue = queue.Queue()
+        
+        def enqueue_output(out, queue):
+            for line in iter(out.readline, ''):
+                queue.put(line)
+            out.close()
+        
+        threading.Thread(target=enqueue_output, args=(process.stdout, output_queue), daemon=True).start()
+        threading.Thread(target=enqueue_output, args=(process.stderr, output_queue), daemon=True).start()
+        
+        # Remove any old entries with the same command
+        global running_processes
+        running_processes = [p for p in running_processes if p['cmd'] != command]
+        
+        # Add the new process to the list
+        running_processes.append({
+            "cmd": command,
+            "process": process,
+            "queue": output_queue,
+            "cwd": cwd,
+            "run_command": run_command
+        })
+        
+        # Wait for 10 seconds and collect initial output
+        time.sleep(10)
+        initial_output = ""
+        while not output_queue.empty():
+            initial_output += output_queue.get_nowait()
+        
+        # Keep only the last 2000 characters of the initial output
+        initial_output = initial_output[-2000:]
+        
+        # Change back to the original directory
+        os.chdir(cwd)
+        
+        return f"Started new process: {command}\nInitial output:\n{initial_output}"
+    except PermissionError as e:
+        error_output = f"PermissionError: {str(e)}\n"
+        if run_command.endswith('.go'):
+            suggestion = (
+                "It seems you're trying to execute a Go file from the wrong directory."
+                "To run a Go file, use the following format:\n"
+                "cd /path/to/directory && go run filename.go\n"
+                "For example: cd devlm-identity && go run cmd/api/main.go"
+            )
+            error_output += f"\nSuggestion: {suggestion}"
+        return error_output
+    except Exception as e:
+        return f"Error executing command: {str(e)}"
+    finally:
+        os.chdir(cwd)
 
 def check_process_output(command):
     process_key = get_process_key(command)
@@ -1577,6 +1623,7 @@ def test_and_debug_mode(llm_client):
     while True:
         # Check for chat updates at the start of each iteration
         # check_all_processes()
+        retry_with_expert = False
 
         if HasUserInterrupted:
             user_suggestion = handle_user_suggestion()
@@ -1955,23 +2002,7 @@ def test_and_debug_mode(llm_client):
                 # current_content = remove_line_numbers(file_contents[write_file])
                 # parsed_changes = parse_changes(changes)
                 # new_content = apply_changes(current_content, parsed_changes)
-                changes_made = compare_and_write(write_file, extracted_content)
-                modify_file(write_file, extracted_content)
-                if not changes_made:
-                    print("Warning: No actual changes were made in this iteration.")
-                    command_entry["result"] = {"warning": "No actual changes were made in this iteration."}
-
-                    # Add the file to unchanged_files with a counter of 2
-                    unchanged_files[write_file] = 2
-
-                    command_entry["error"] = f"The file {write_file} cannot be modified for the next 2 successful iterations due to no changes in this attempt."
-
-                    command_history.append(command_entry)
-                    save_command_history(command_history)
-                    iteration += 1
-                    continue
-                print(f"\nModified {write_file}")
-                
+                                
                 changes_prompt = f"""
                 You are a professional software architect and developer.
 
@@ -1994,6 +2025,24 @@ def test_and_debug_mode(llm_client):
                 changes_summary = llm_client.generate_response(changes_prompt, 1000)
                 previous_action_analysis = changes_summary
                 print(f"Changes summary:\n{changes_summary}")
+
+                changes_made = compare_and_write(write_file, extracted_content)
+                if not changes_made:
+                    print("Warning: No actual changes were made in this iteration.")
+                    command_entry["result"] = {"warning": "No actual changes were made in this iteration."}
+
+                    # Add the file to unchanged_files with a counter of 2
+                    unchanged_files[write_file] = 2
+
+                    command_entry["error"] = f"The file {write_file} cannot be modified for the next 2 successful iterations due to no changes in this attempt."
+
+                    command_history.append(command_entry)
+                    save_command_history(command_history)
+                    iteration += 1
+                    continue
+
+                modify_file(write_file, extracted_content)
+                print(f"\nModified {write_file}")
                 
                 technical_brief = update_technical_brief(write_file, new_content, iteration, mode="test", test_info=changes_summary)
                 update_test_progress(current_step=f"Inspected multiple files and modified {write_file}")
@@ -2092,7 +2141,7 @@ def test_and_debug_mode(llm_client):
 
                             Execution {'succeeded' if success else 'failed'}
 
-                            This is for the result section of this command. Respond based on the command execution in 100 words or less (lesser the better):
+                            This is for the result section of this command. Respond based on the command execution in 200 words or less (lesser the better). Provide specifics on the success of the command, any errors encountered, and the next steps based on the output. If a test was run, provide the results and any debugging steps (with errors in specific files and lines) trying to fix issues one by one:
                             """
                             analysis = llm_client.generate_response(analysis_prompt, 1000)
                             print(f"Command analysis:\n{analysis}")
@@ -2107,15 +2156,17 @@ def test_and_debug_mode(llm_client):
                         command_entry["error"] = f"{env_output}"
                         command_entry["result"] = {"error": error_msg, "env_output": env_output}
                         wait_for_user()
-                else:
-                    error_msg = f"Error: Invalid action: {action}"
-                    print(error_msg)
-                    command_entry["error"] = error_msg
+
+            else:
+                error_msg = f"Error: Invalid action: {action}"
+                print(error_msg)
+                command_entry["error"] = error_msg
             
             command_history.append(command_entry)
             save_command_history(command_history)
         else:
             print("Invalid response format. Please provide an action.")
+            command_entry["error"] = "Invalid response format. Please provide an action."
 
         test_progress = load_test_progress()
         iteration += 1
