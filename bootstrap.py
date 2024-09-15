@@ -250,7 +250,7 @@ def get_llm_client(provider: str = "anthropic", model: Optional[str] = None) -> 
         return AnthropicLLM(anthropic.Anthropic(api_key=API_KEY))
     elif provider == "vertex_ai":
         # Replace with your actual Google Cloud project ID and region
-        project_id = "devlm-434202"
+        project_id = "devlm-435701"
         region = "us-east5"
         return VertexAILLM(project_id, region, model)
     else:
@@ -1096,34 +1096,6 @@ def execute_command_with_timeout(command, timeout):
     else:
         return output.strip(), True
 
-def compare_and_write(file_path, new_content):
-    try:
-        with open(file_path, 'r') as f:
-            old_content = f.read()
-        
-        if old_content != new_content:
-            diff = list(difflib.unified_diff(old_content.splitlines(keepends=True), 
-                                             new_content.splitlines(keepends=True), 
-                                             fromfile='before', 
-                                             tofile='after'))
-            if diff:
-                with open(file_path, 'w') as f:
-                    f.write(new_content)
-                print(f"Changes made to {file_path}:")
-                print(''.join(diff))
-                return True
-            else:
-                print(f"No actual changes to write in {file_path}")
-                return False
-        else:
-            print(f"File {file_path} content is identical. No changes made.")
-            return False
-    except FileNotFoundError:
-        with open(file_path, 'w') as f:
-            f.write(new_content)
-        print(f"Created new file: {file_path}")
-        return True
-
 def check_environment(command):
     print("Checking environment...")
     
@@ -1258,7 +1230,7 @@ def extract_content(response_text, file_path):
         return response_text.strip()
 
 def get_last_10_iterations(command_history):
-    return command_history[-10:] if len(command_history) > 10 else command_history
+    return command_history[-15:] if len(command_history) > 15 else command_history
 
 llm_notes = {
     "general": "",
@@ -1493,9 +1465,6 @@ def compare_and_write(file_path, new_content):
             print(f"File {file_path} content is identical. No changes made.")
             return False
     except FileNotFoundError:
-        with open(file_path, 'w') as f:
-            f.write(new_content)
-        print(f"Created new file: {file_path}")
         return True
 
 def update_project_structure(file_path):
@@ -1619,6 +1588,7 @@ def test_and_debug_mode(llm_client):
 
     # Previous action analysis
     previous_action_analysis = None
+    ModifiedFile = False
 
     while True:
         # Check for chat updates at the start of each iteration
@@ -1672,6 +1642,8 @@ def test_and_debug_mode(llm_client):
         Latest Process Outputs:
         {', '.join(process_outputs) if process_outputs else "No new output from background processes."}
 
+        {"You modified a file in the previous iteration. If you are done with code changes and moving to testing, remember to start/restart the appropriate process using INDEF/RESTART " if ModifiedFile else ""}
+
         Directives:
         CRITICAL: Use the command history (especially the previous command) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
         0. Follow a continuous development, integration, and testing workflow. Do This includes writing code, testing, debugging, and fixing issues.
@@ -1691,7 +1663,7 @@ def test_and_debug_mode(llm_client):
         3. Run a raw command that requires approval, use: "RAW: <raw_command>". This will run the command in the shell and provide you with the output. You can use this for any command that is not in the allowed list.
         4. Check the output current running process using "CHECK: <command>"
         5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..."
-        6. Inspect multiple files (maximum 4) and modify one (one of the files that being inspected only) by replying with "MULTI: <file_path>, <file_path>, ...; MODIFY: <file_path>" 
+        6. Inspect multiple files (minimum: 4, maximum: 4) and modify one (one of the files that being inspected only) by replying with "MULTI: <file_path1>, <file_path2>, <file_path3>, <file_path4>; MODIFY: <file_path(1,2,3,4)>" 
         7. Ask the user for help by replying with "HELP: <your question>". Do this when you see that no progress is being made.
         8. Restart a running process with "RESTART: <command>"
         9. Finish testing by replying with "DONE"
@@ -1710,10 +1682,12 @@ def test_and_debug_mode(llm_client):
         final_prompt = prompt # + prompt_extension
 
         HasUserInterrupted = False
+        ModifiedFile = False
         previous_action_analysis = None
 
         # For debug, print the process outputs been provided
         print(f"Process outputs for debug: {process_outputs}")
+        
         
         print(f"\nGenerating next step (Iteration {iteration})...")
         # Print the prompt for the user
@@ -1732,7 +1706,7 @@ def test_and_debug_mode(llm_client):
             reason = reason_match.group(1).strip() if reason_match else "No reason provided"
             goals = goals_match.group(1).strip() if goals_match else "No goals provided"
             command_entry = {"iteration": iteration, "action": action, "reason": reason, "goals": goals}
-
+            command_entry["process_outputs"] = process_outputs
             if notes_match:
                 new_notes = notes_match.group(1).strip()
                 command_entry["notes_updated"] = True 
@@ -1931,8 +1905,8 @@ def test_and_debug_mode(llm_client):
                             command_entry["error"] += error_msg
                     else:
                         content = read_file(file_path)
-                        numbered_content = add_line_numbers(content)
-                        file_contents[file_path] = numbered_content
+                        # numbered_content = add_line_numbers(content)
+                        file_contents[file_path] = content
 
                 if write_file not in file_contents or file_contents[write_file].startswith("Error: File not found"):
                     print(f"The file to be written ({write_file}) does not exist.")
@@ -1960,6 +1934,8 @@ def test_and_debug_mode(llm_client):
                 inspection_prompt = f"""
                 {prompt}
 
+                You are a professional software architect and developer.
+
                 You chose to inspect multiple files and modify one of them.
 
                 Inspected files:
@@ -1976,11 +1952,13 @@ def test_and_debug_mode(llm_client):
                 inspection_prompt += f"""
                 You will modify the file addressing the following goals.
 
+                {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
+
                 Reason for this action: {reason}
 
                 Goals for this action: {goals}
 
-                Please provide the complete updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, you must not make an unnecessary changes to the code. Never remove features unless specified. You must provide the full content since this is directly written to the file without processing. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
+                Please provide the complete updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, while keeping code CONSISTENT across files, you must not make an unnecessary changes to the code. Never remove features unless specified. You must provide the full content since this is directly written to the file without processing. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
                 """
                 # Use the following format to provide changes for the file. There should be no other content in your response, only changes to the file content:
                 # - To add a line after a line number: +<line_number>:new_content
@@ -2015,10 +1993,10 @@ def test_and_debug_mode(llm_client):
                 Command history (last 10 commands) for better context: {json.dumps(last_10_iterations, indent=2)}
 
                 Summarize the changes made to the file {write_file} for future notes to yourself. Compare the original content:
-                {file_contents[write_file]}
+                {read_file(write_file)}
 
                 With the new content:
-                {new_content}
+                {extracted_content}
 
                 This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less:
                 """
@@ -2043,6 +2021,7 @@ def test_and_debug_mode(llm_client):
 
                 modify_file(write_file, extracted_content)
                 print(f"\nModified {write_file}")
+                ModifiedFile = True
                 
                 technical_brief = update_technical_brief(write_file, new_content, iteration, mode="test", test_info=changes_summary)
                 update_test_progress(current_step=f"Inspected multiple files and modified {write_file}")
