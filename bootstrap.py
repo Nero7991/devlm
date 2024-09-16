@@ -1576,6 +1576,10 @@ def test_and_debug_mode(llm_client):
     global HasUserInterrupted
     def handle_interrupt(signum, frame):
         global HasUserInterrupted
+        if HasUserInterrupted:
+            print("\nSecond Ctrl+C received. Exiting the program.")
+            kill_all_processes()
+            sys.exit(0)
         HasUserInterrupted = True
 
     # Set up the signal handler
