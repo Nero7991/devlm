@@ -729,9 +729,30 @@ def get_processed_files():
         return processed_files
     return set()
 
+def generate_project_structure(root_dir='.'):
+    def create_structure(path):
+        structure = {"": []}
+        for item in os.listdir(path):
+            if item == 'node_modules' or item.startswith('.'):
+                continue
+            full_path = os.path.join(path, item)
+            if os.path.isfile(full_path):
+                structure[""].append(item)
+            elif os.path.isdir(full_path):
+                structure[item] = create_structure(full_path)
+        return structure
+
+    return create_structure(root_dir)
+
+def save_project_structure(structure):
+    with open('project_structure.json', 'w') as f:
+        json.dump(structure, f, indent=2)
+
 def read_project_structure():
-    with open('project_structure.json', 'r') as f:
-        return json.load(f)
+    if os.path.exists('project_structure.json'):
+        with open('project_structure.json', 'r') as f:
+            return json.load(f)
+    return None
 
 def inspect_file_with_approval(file_path):
     project_root = os.getcwd()  # Get the current working directory (project root)
@@ -1470,22 +1491,28 @@ def compare_and_write(file_path, new_content):
 def update_project_structure(file_path):
     with open('project_structure.json', 'r') as f:
         project_structure = json.load(f)
-    
+
     # Split the file path into components
     path_parts = file_path.split(os.sep)
     
     # Identify the top-level project (e.g., "devlm-identity" or "devlm-core")
     project = path_parts[0]
     
-    # Find or create the project in the structure
+    # If the project doesn't exist in the structure, create it
     if project not in project_structure:
-        project_structure[project] = []
+        project_structure[project] = {"": []}
     
-    # Check if the file already exists in the project structure
-    if file_path not in project_structure[project]:
-        # Add the full file path to the project list
-        project_structure[project].append(file_path)
-        
+    # Navigate through the directory structure
+    current_level = project_structure[project]
+    for part in path_parts[1:-1]:  # Exclude the last part (file name)
+        if part not in current_level:
+            current_level[part] = {"": []}
+        current_level = current_level[part]
+    
+    # Add the file to the appropriate level
+    file_name = path_parts[-1]
+    if file_name not in current_level[""]:
+        current_level[""].append(file_name)
         print(f"Updated project structure with new file: {file_path}")
     else:
         print(f"File {file_path} already exists in the project structure.")
@@ -2360,6 +2387,18 @@ def generate():
 def main():
     # Ensure chat file exists before entering any mode
     ensure_chat_file_exists()
+
+        # Check if project_structure.json exists
+    project_structure = read_project_structure()
+    if project_structure is None:
+        user_input = input("project_structure.json not found. Do you want to generate it? (yes/no): ").lower()
+        if user_input == 'yes':
+            project_structure = generate_project_structure()
+            save_project_structure(project_structure)
+            print("project_structure.json has been generated.")
+        else:
+            print("Please create a project_structure.json file manually before proceeding.")
+            return
 
     mode = input("Enter mode (generate/test): ").lower()
     
