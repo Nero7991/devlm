@@ -183,7 +183,7 @@ class VertexAILLM(LLMInterface):
         messages = [{"role": "user", "content": prompt}]
         full_response = ""
         iteration = 0
-        max_iterations = 2  # Limit the number of iterations to prevent infinite loops
+        max_iterations = 4  # Limit the number of iterations to prevent infinite loops
 
         while iteration < max_iterations:
             for attempt in range(self.max_retries):
@@ -208,7 +208,7 @@ class VertexAILLM(LLMInterface):
                             f"{prompt}\n\n"
                             f"Previous output (possibly incomplete):\n<<<START>>>{full_response}<<<END>>>\n\n"
                             "The previous response was very close to the output token limit and might not have completed. "
-                            "Your previous output starts after the third greater than sign in <<<START>>> and ends at the character before the first less than sign in <<<END>>>. Please continue the output (including new line and tabs if needed), picking up where you left off without repeating information, your output will be appended without modification before first less than sign in <<<END>>>. Do not include anything other than the continuation of the output."
+                            "Your previous output starts after the third greater than sign in <<<START>>> and ends at the character before the first less than sign in <<<END>>>. Please continue the output (adding new line and tabs if needed at the beginning), picking up where you left off without repeating information, your output will be appended without modification before first less than sign in <<<END>>>. Do not include anything other than the continuation of the output."
                         )
                         messages = [{"role": "user", "content": continuation_prompt}]
                         iteration += 1
@@ -408,7 +408,8 @@ def create_project_structure(structure):
             for item in items:
                 file_path = os.path.join(path, item)
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                open(file_path, 'w').close()
+                if not os.path.exists(file_path):
+                    open(file_path, 'w').close()
         elif isinstance(items, dict):
             for subdir, subitems in items.items():
                 subpath = os.path.join(path, subdir)
@@ -866,6 +867,49 @@ process_initial_outputs = {}
 import queue
 import psutil
 
+def check_and_terminate_existing_process(command):
+    cd_part, run_part = parse_compound_command(command)
+    process_key = get_process_key(command)
+    
+    # Change to the target directory if specified
+    original_dir = os.getcwd()
+    if cd_part:
+        target_dir = cd_part.split(None, 1)[1]
+        os.chdir(target_dir)
+    
+    try:
+        # Use pgrep to find the process ID
+        pgrep_command = f"pgrep -f '{run_part}'"
+        result = subprocess.run(pgrep_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        if result.returncode == 0:
+            pids = [int(pid) for pid in result.stdout.strip().split()]
+            for pid in pids:
+                try:
+                    process = psutil.Process(pid)
+                    print(f"Process '{process_key}' (PID: {pid}) is already running. Terminating it.")
+                    process.terminate()
+                    
+                    try:
+                        process.wait(timeout=5)
+                    except psutil.TimeoutExpired:
+                        print(f"Process {pid} did not terminate within timeout. Forcing termination.")
+                        process.kill()
+                    
+                    print(f"Process {pid} has been terminated.")
+                except psutil.NoSuchProcess:
+                    print(f"Process {pid} no longer exists.")
+                except psutil.AccessDenied:
+                    print(f"Access denied when trying to terminate process {pid}.")
+            
+            time.sleep(2)  # Wait for 2 seconds to ensure resources are released
+            return True
+    finally:
+        # Change back to the original directory
+        os.chdir(original_dir)
+    
+    return False
+
 def parse_compound_command(command):
     parts = command.split('&&')
     cd_part = None
@@ -880,31 +924,10 @@ def parse_compound_command(command):
 
 def get_process_key(command):
     _, run_part = parse_compound_command(command)
-    return run_part.split()[-1] if run_part else command.split()[-1]
-
-def check_and_terminate_existing_process(command):
-    cd_part, run_part = parse_compound_command(command)
-    process_key = get_process_key(command)
-    
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-        try:
-            cmdline = proc.info['cmdline']
-            if cmdline and process_key in ' '.join(cmdline):
-                print(f"Process '{process_key}' is already running. Terminating it.")
-                parent = psutil.Process(proc.info['pid'])
-                for child in parent.children(recursive=True):
-                    child.terminate()
-                parent.terminate()
-                parent.wait(5)  # Wait for up to 5 seconds
-                if parent.is_running():
-                    print(f"Process didn't terminate gracefully. Forcing...")
-                    parent.kill()
-                    parent.wait(2)
-                time.sleep(2)  # Wait for 2 seconds to ensure the port is released
-                return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
-    return False
+    # For npm commands, use the script name as the key
+    if run_part.startswith('npm run'):
+        return run_part.split()[-1]
+    return run_part
 
 def run_continuous_process(command):
     check_and_terminate_existing_process(command)
@@ -954,15 +977,12 @@ def run_continuous_process(command):
         # Keep only the last 2000 characters of the initial output
         initial_output = initial_output[-2000:]
         
-        # Change back to the original directory
-        os.chdir(cwd)
-        
         return f"Started new process: {command}\nInitial output:\n{initial_output}"
     except PermissionError as e:
         error_output = f"PermissionError: {str(e)}\n"
         if run_command.endswith('.go'):
             suggestion = (
-                "It seems you're trying to execute a Go file from the wrong directory."
+                "It seems you're trying to execute a Go file from the wrong directory. "
                 "To run a Go file, use the following format:\n"
                 "cd /path/to/directory && go run filename.go\n"
                 "For example: cd devlm-identity && go run cmd/api/main.go"
@@ -972,6 +992,7 @@ def run_continuous_process(command):
     except Exception as e:
         return f"Error executing command: {str(e)}"
     finally:
+        # Change back to the original directory
         os.chdir(cwd)
 
 def check_process_output(command):
@@ -1555,6 +1576,77 @@ def wait_for_user_input():
     last_chat_content = read_chat_file()
     chat_updated = False
 
+import json
+from typing import List, Dict
+
+HISTORY_BRIEF_FILE = "history_brief.json"
+MAX_BRIEF_COMMANDS = 20
+UPDATE_INTERVAL = 10
+
+def load_history_brief() -> Dict:
+    try:
+        with open(HISTORY_BRIEF_FILE, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return { "key_events": []}
+
+def save_history_brief(brief: Dict):
+    with open(HISTORY_BRIEF_FILE, 'w') as f:
+        json.dump(brief, f, indent=2)
+
+def update_history_brief(command_history: List[Dict], current_brief: Dict, user_goal: str, chat_content: str, project_structure: Dict) -> Dict:
+    recent_commands = command_history[-30:]  # Get the last MAX_BRIEF_COMMANDS commands
+    
+    update_prompt = f"""
+    You are software developer tasked with maintaining a concise history brief of a software development project. Since you are only provided the last 15 raw commands, you need to extract key events and summarize the project's progress based on the command history and the previous brief. This will help in tracking the project's development and identifying any issues or challenges and prevent repetition of the same mistakes and work. Be specific and concise in your output so that the project's progress can be easily tracked.
+    
+    Current user goal: {user_goal}
+
+    Current project structure:
+    {json.dumps(project_structure, indent=2)}
+
+    Current command history brief:
+    {json.dumps(current_brief, indent=2)}
+
+    Recent user chat content:
+    {chat_content}
+
+    Recent command history (last 30 commands):
+    {json.dumps(recent_commands, indent=2)}
+
+    Please update the history brief with the following guidelines:
+    1. List key events or milestones (max 20 items).
+    2. Include any recurring issues or challenges.
+    3. Highlight successful implementations or resolved problems.
+    4. Note any significant changes in project direction or scope.
+    5. Mention any external factors affecting the project (e.g., API changes, library updates).
+
+    Respond with a JSON object in the following format without any other text:
+    {{
+        "key_events": [
+            "Event 1",
+            "Event 2",
+            ...
+        ]
+    }}
+    """
+    #print (update_prompt)
+
+    response = llm_client.generate_response(update_prompt, 2000)
+    print(f"History brief response: {response}")
+    try:
+        updated_brief = json.loads(response)
+        return updated_brief
+    except json.JSONDecodeError:
+        print("Error: Failed to parse LLM response as JSON. Using previous brief.")
+        return current_brief
+
+def get_history_brief_for_prompt(brief: Dict) -> str:
+    return f"""
+    Key Events:
+    {chr(10).join(f"- {event}" for event in brief['key_events'])}
+    """
+
 last_inspected_files = []
 
 HasUserInterrupted = False
@@ -1580,15 +1672,19 @@ def test_and_debug_mode(llm_client):
     project_structure = read_project_structure()
     test_progress = load_test_progress()
     command_history = load_command_history()
+    history_brief = load_history_brief()
+
     
     print("Entering test and debug mode...")
-    print(f"Completed tests: {test_progress['completed_tests']}")
-    print(f"Current step: {test_progress['current_step']}")
-    print(f"Command history: {json.dumps(command_history, indent=2)}")
+    # print(f"Completed tests: {test_progress['completed_tests']}")
+    # print(f"Current step: {test_progress['current_step']}")
+    # print(f"Command history: {json.dumps(command_history, indent=2)}")
+    print(f"History brief: {json.dumps(history_brief, indent=2)}")
 
     iteration = len(command_history) + 1
-
-
+    start_iteration = iteration
+    relative_iteration = 1
+    last_unsuccessful_inspection_iteration = iteration
 
     def handle_user_suggestion():
         print("\nCtrl+C pressed. You can type 'exit' to quit or provide a suggestion.")
@@ -1625,7 +1721,7 @@ def test_and_debug_mode(llm_client):
         # Check for chat updates at the start of each iteration
         # check_all_processes()
         retry_with_expert = False
-
+        relative_iteration = iteration - start_iteration + 1
         if HasUserInterrupted:
             user_suggestion = handle_user_suggestion()
 
@@ -1635,6 +1731,12 @@ def test_and_debug_mode(llm_client):
             wait_for_user_input()
 
         last_10_iterations = get_last_10_iterations(command_history)
+
+        # Update history brief every 10 iterations
+        if relative_iteration % UPDATE_INTERVAL == 1:
+            history_brief = update_history_brief(command_history, history_brief, project_summary, last_chat_content, project_structure)
+            save_history_brief(history_brief)
+            print("Updated history brief.")
 
         # Collect information about running processes and their latest output
         process_status = []
@@ -1648,6 +1750,8 @@ def test_and_debug_mode(llm_client):
             if output:
                 process_outputs.append(f"Latest output from '{process_info['cmd']}':\n{output[-2000:]}")
 
+        history_brief_prompt = get_history_brief_for_prompt(history_brief)
+
         prompt = f"""
         You are in test and debug mode for the project. You are a professional software architect and developer. Adhere to the directives, best practices and provide accurate responses based on the project context. You can refer to the project summary, technical brief, and project structure for information.
 
@@ -1659,6 +1763,9 @@ def test_and_debug_mode(llm_client):
 
         Command History (last 10 commands):
         {json.dumps(last_10_iterations, indent=2)}
+
+        Command history brief:
+        {history_brief_prompt}
 
         Administrator's Notes: 
         {last_chat_content}
@@ -1763,7 +1870,8 @@ def test_and_debug_mode(llm_client):
                     file_contents = {}
 
                     # Check if the current set of files is the same as the last inspected set
-                    if set(inspect_files) == set(last_inspected_files):
+                    if set(inspect_files) == set(last_inspected_files) and (iteration - last_unsuccessful_inspection_iteration) == 1:
+                        last_unsuccessful_inspection_iteration = iteration
                         error_msg = "Error: Cannot inspect the same set of files consecutively. Please include at least one different file."
                         print(error_msg)
                         command_entry["error"] = error_msg
@@ -1884,7 +1992,7 @@ def test_and_debug_mode(llm_client):
                 changes_summary = llm_client.generate_response(changes_prompt, 1000)
                 print(f"Changes summary:\n{changes_summary}")
                 
-                technical_brief = update_technical_brief(file_path, extracted_content, iteration, mode="test", test_info=changes_summary)
+                # technical_brief = update_technical_brief(file_path, extracted_content, iteration, mode="test", test_info=changes_summary)
                 update_test_progress(current_step=f"Modified {file_path}")
                 
                 command_entry["result"] = {"changes_summary": changes_summary}
@@ -1969,7 +2077,7 @@ def test_and_debug_mode(llm_client):
 
                 You chose to inspect multiple files and modify one of them.
 
-                Inspected files:
+                Files to be thoroughly analysed and inspected to modify {write_file} file:
                 """
 
                 for file_path, content in file_contents.items():
@@ -1981,7 +2089,7 @@ def test_and_debug_mode(llm_client):
                 """
 
                 inspection_prompt += f"""
-                You will modify the file addressing the following goals.
+                Use the contents of the provided files to modify the file {write_file}, consider the previous action, reason and goals for the modification. Use chain of thought to make the modifications.
 
                 {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
 
@@ -2054,7 +2162,7 @@ def test_and_debug_mode(llm_client):
                 print(f"\nModified {write_file}")
                 ModifiedFile = True
                 
-                technical_brief = update_technical_brief(write_file, new_content, iteration, mode="test", test_info=changes_summary)
+                # technical_brief = update_technical_brief(write_file, new_content, iteration, mode="test", test_info=changes_summary)
                 update_test_progress(current_step=f"Inspected multiple files and modified {write_file}")
                 
                 command_entry["result"] = {"changes_summary": changes_summary}
