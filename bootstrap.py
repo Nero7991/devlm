@@ -25,6 +25,13 @@ import atexit
 from typing import Optional
 import psutil
 import difflib
+import argparse
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 try:
     import anthropic
@@ -1048,7 +1055,23 @@ def restart_process(cmd):
 command_decisions = {}
 
 def execute_command(command, timeout=600):
-    global command_decisions
+    global command_decisions, frontend_testing_enabled, current_url
+
+    if frontend_testing_enabled:
+        if command.upper().startswith("UI_OPEN:"):
+            url = command.split(":", 1)[1].strip()
+            return ui_open_url(url), True
+        elif command.upper().startswith("UI_CLICK:"):
+            button_id = command.split(":", 1)[1].strip()
+            return ui_click_button(button_id), True
+        elif command.upper().startswith("UI_CHECK_TEXT:"):
+            parts = command.split(":", 2)
+            element_id = parts[1].strip()
+            expected_text = parts[2].strip()
+            return ui_check_element_text(element_id, expected_text), True
+        elif command.upper().startswith("UI_CHECK_LOG:"):
+            expected_log = command.split(":", 1)[1].strip()
+            return ui_check_console_logs(expected_log), True
 
     if command.upper().startswith("INDEF:"):
         cmd = command.split(":", 1)[1].strip()
@@ -1651,9 +1674,263 @@ last_inspected_files = []
 
 HasUserInterrupted = False
 
+# Add new global variables for frontend testing
+frontend_testing_enabled = False
+browser = None
+current_url = None
+
+frontend_testing_enabled = False
+browser = None
+current_url = None
+
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import WebDriverException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
+
+def check_url_accessibility(url, timeout=5):
+    try:
+        response = requests.get(url, timeout=timeout)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+def diagnose_chrome_connection():
+    try:
+        response = requests.get("http://localhost:9222/json/version", timeout=5)
+        if response.status_code == 200:
+            print("Chrome DevTools is accessible.")
+            return True
+        else:
+            print(f"Chrome DevTools returned unexpected status code: {response.status_code}")
+    except requests.RequestException as e:
+        print(f"Unable to connect to Chrome DevTools: {str(e)}")
+    return False
+
+def ensure_chrome_is_running():
+    try:
+        subprocess.check_output(["pgrep", "chrome"])
+        print("Chrome is already running.")
+    except subprocess.CalledProcessError:
+        print("Chrome is not running. Starting Chrome with remote debugging...")
+        
+        display = os.environ.get('DISPLAY', ':0')
+        os.environ['DISPLAY'] = display
+        
+        chrome_cmd = [
+            "google-chrome",
+            "--no-sandbox",
+            "--remote-debugging-port=9222",
+            "--user-data-dir=/tmp/chrome-testing"
+        ]
+        
+        try:
+            subprocess.Popen(chrome_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"Started Chrome on display {display}")
+            time.sleep(5)  # Wait for Chrome to start
+        except Exception as e:
+            print(f"Error starting Chrome: {str(e)}")
+            print("Please ensure X11 forwarding is enabled in your SSH connection.")
+            print("You may need to reconnect with: ssh -X user@host")
+    
+    if not diagnose_chrome_connection():
+        print("Chrome DevTools is not accessible. Please check Chrome's status manually.")
+
+
+def setup_frontend_testing():
+    global browser
+    try:
+        print("Setting up frontend testing...")
+        
+        # Instructions for manually starting Chrome
+        print("Please start Chrome manually with remote debugging enabled.")
+        print("Run this command in a new terminal:")
+        print("google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-testing")
+        print("Press Enter when Chrome is running...")
+        input()
+
+        # Set up Chrome options for connecting to the running instance
+        chrome_options = Options()
+        chrome_options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
+        
+        # Connect to the running Chrome instance
+        service = Service()  # You might need to specify the path to chromedriver here
+        browser = webdriver.Chrome(service=service, options=chrome_options)
+        
+        print("Connected to Chrome browser for UI testing")
+    except Exception as e:
+        print(f"Error setting up frontend testing: {str(e)}")
+        print("\nTroubleshooting steps:")
+        print("1. Ensure that Google Chrome is installed and running with remote debugging enabled.")
+        print("2. Make sure no other Chrome instances are using the debugging port (9222).")
+        print("3. If you're still having issues, try running the script with sudo:")
+        print("   sudo python3 bootstrap.py --mode test --frontend")
+        print("4. If the problem persists, please provide the full error message for further assistance.")
+        sys.exit(1)
+
+def teardown_frontend_testing():
+    global browser
+    if browser:
+        browser.quit()
+        print("Chrome browser closed")
+
+import random
+
+def connect_to_chrome(max_retries=5, retry_delay=5):
+    global browser
+    for attempt in range(max_retries):
+        try:
+            chrome_options = Options()
+            chrome_options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
+            service = Service()
+            browser = webdriver.Chrome(service=service, options=chrome_options)
+            print("Connected to Chrome browser for UI testing")
+            return True
+        except WebDriverException as e:
+            print(f"Attempt {attempt + 1} failed: {str(e)}")
+            if attempt < max_retries - 1:
+                print(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                print("Max retries reached. Unable to connect to Chrome.")
+                return False
+
+def ui_open_url(url):
+    global browser
+    if not frontend_testing_enabled:
+        return "Frontend testing is not enabled.", False
+    
+    if not check_url_accessibility(url):
+        return f"The URL {url} is not accessible. Please check if the server is running.", False
+    
+    try:
+        if browser is None or not connect_to_chrome():
+            return "Failed to connect to Chrome browser.", False
+        
+        browser.get(url)
+        try:
+            WebDriverWait(browser, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            return f"Opened URL: {url}", True
+        except TimeoutException:
+            return f"Timeout waiting for page to load: {url}", False
+    except Exception as e:
+        error_msg = f"Error opening URL: {str(e)}"
+        print(error_msg)
+        print("Attempting to reconnect to Chrome...")
+        if connect_to_chrome():
+            try:
+                browser.get(url)
+                WebDriverWait(browser, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                return f"Reconnected and opened URL: {url}", True
+            except Exception as e2:
+                return f"{error_msg}\nReconnection attempt failed: {str(e2)}", False
+        return error_msg, False
+
+def ui_click_button(button_id):
+    if not frontend_testing_enabled:
+        return "Frontend testing is not enabled."
+    try:
+        button = WebDriverWait(browser, 10).until(
+            EC.element_to_be_clickable((By.ID, button_id))
+        )
+        button.click()
+        return f"Clicked button with ID: {button_id}"
+    except Exception as e:
+        return f"Error clicking button: {str(e)}"
+
+def ui_check_element_text(element_id, expected_text):
+    if not frontend_testing_enabled:
+        return "Frontend testing is not enabled."
+    try:
+        element = WebDriverWait(browser, 10).until(
+            EC.presence_of_element_located((By.ID, element_id))
+        )
+        actual_text = element.text
+        if actual_text == expected_text:
+            return f"Element {element_id} has the expected text: {expected_text}"
+        else:
+            return f"Text mismatch for element {element_id}. Expected: {expected_text}, Actual: {actual_text}"
+    except Exception as e:
+        return f"Error checking element text: {str(e)}"
+
+def ui_check_console_logs(expected_log):
+    if not frontend_testing_enabled:
+        return "Frontend testing is not enabled.", False
+
+    try:
+        logs = browser.get_log('browser')
+        full_log_text = "\n".join([log['message'] for log in logs])
+        last_2000_chars = full_log_text[-2000:] if len(full_log_text) > 2000 else full_log_text
+        
+        expected_log_found = any(expected_log in log['message'] for log in logs)
+        
+        if expected_log_found:
+            result = f"Found expected log: {expected_log}"
+            success = True
+        else:
+            result = f"Expected log not found: {expected_log}"
+            success = False
+        
+        return f"{result}\n\nLast 2000 characters of logs:\n{last_2000_chars}", success
+    except Exception as e:
+        return f"Error checking console logs: {str(e)}\n\nUnable to retrieve logs.", False
+    
+def ensure_chrome_is_running():
+    try:
+        subprocess.check_output(["pgrep", "chrome"])
+    except subprocess.CalledProcessError:
+        print("Chrome is not running. Starting Chrome with remote debugging...")
+        subprocess.Popen(["google-chrome", "--remote-debugging-port=9222", "--user-data-dir=/tmp/chrome-testing"])
+        time.sleep(5)  # Wait for Chrome to start
+
+def restart_chrome_if_needed():
+    global browser
+    try:
+        # Try to execute a simple command
+        browser.title
+    except Exception:
+        print("Chrome seems to have crashed. Restarting...")
+        ensure_chrome_is_running()
+        connect_to_chrome()
+  
+def handle_ui_action(command):
+    global command_decisions, frontend_testing_enabled, current_url
+    
+    if frontend_testing_enabled:
+        restart_chrome_if_needed()
+        if command.upper().startswith("UI_OPEN:"):
+            url = command.split(":", 1)[1].strip()
+            return ui_open_url(url)
+        elif command.upper().startswith("UI_CLICK:"):
+            button_id = command.split(":", 1)[1].strip()
+            return ui_click_button(button_id), True
+        elif command.upper().startswith("UI_CHECK_TEXT:"):
+            parts = command.split(":", 2)
+            element_id = parts[1].strip()
+            expected_text = parts[2].strip()
+            return ui_check_element_text(element_id, expected_text), True
+        elif command.upper().startswith("UI_CHECK_LOG:"):
+            expected_log = command.split(":", 1)[1].strip()
+            return ui_check_console_logs(expected_log)
+        else:
+            return f"Unknown UI action: {command}", False
+    else:
+        return "Frontend testing is not enabled.", False
+    
+HasUserInterrupted = False
 
 def test_and_debug_mode(llm_client):
     global unchanged_files, last_inspected_files
+
+    JustStarted = True
+    
 
     # Add this function to handle unexpected terminations
     def handle_unexpected_termination(signum, frame):
@@ -1782,6 +2059,8 @@ def test_and_debug_mode(llm_client):
 
         {"You modified a file in the previous iteration. If you are done with code changes and moving to testing, remember to start/restart the appropriate process using INDEF/RESTART " if ModifiedFile else ""}
 
+        {"This session just started, processes that were started in the previous session have been terminated." if JustStarted else ""}
+
         Directives:
         CRITICAL: Use the command history (especially the previous command) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
         0. Follow a continuous development, integration, and testing workflow. Do This includes writing code, testing, debugging, and fixing issues.
@@ -1805,6 +2084,14 @@ def test_and_debug_mode(llm_client):
         7. Ask the user for help by replying with "HELP: <your question>". Do this when you see that no progress is being made.
         8. Restart a running process with "RESTART: <command>"
         9. Finish testing by replying with "DONE"
+        {f'''
+        10. UI Debugging and Testing Actions:
+            - Open a URL: "UI_OPEN: <url>"
+            - Check console logs (Use this to debug and check if the page loaded correctly): "UI_CHECK_LOG: <expected_log_message>"
+            - Click a button: "UI_CLICK: <button_id>"  
+        
+        Current URL: {current_url if current_url else "No URL opened yet"}
+        ''' if frontend_testing_enabled else ''}
 
         Provide your response in the following format:
         ACTION: <your chosen action>
@@ -1813,7 +2100,7 @@ def test_and_debug_mode(llm_client):
 
         What would you like to do next to progress towards project completion?
         """
-
+        # - Check element text (Use to debug contents of an element): "UI_CHECK_TEXT: <element_id>: <expected_text>"
         # if running_processes:
         #     final_prompt = prompt + prompt_prcoesses + prompt_extension
         # else:
@@ -1845,6 +2132,8 @@ def test_and_debug_mode(llm_client):
             goals = goals_match.group(1).strip() if goals_match else "No goals provided"
             command_entry = {"iteration": iteration, "action": action, "reason": reason, "goals": goals}
             command_entry["process_outputs"] = process_outputs
+            if JustStarted:
+                command_entry["restart"] = "The session just started, processes that were started in the previous session have been terminated."
             if notes_match:
                 new_notes = notes_match.group(1).strip()
                 command_entry["notes_updated"] = True 
@@ -2275,6 +2564,29 @@ def test_and_debug_mode(llm_client):
                         command_entry["result"] = {"error": error_msg, "env_output": env_output}
                         wait_for_user()
 
+            elif action.upper().startswith(("UI_OPEN:", "UI_CLICK:", "UI_CHECK_TEXT:", "UI_CHECK_LOG:")):
+                print(f"\nExecuting UI action: {action}")
+                output, success = handle_ui_action(action)
+                print(f"Action output:\n{output}")
+                update_test_progress(completed_test=action, current_step=f"Executed UI action: {action}")
+                command_entry["output"] = output[:12000] if len(output) < 12000 else "Output truncated due to length"
+                previous_action_analysis = output
+                command_entry["success"] = success
+
+                # Add UI-specific analysis
+                ui_analysis_prompt = f"""
+                You executed a UI action: {action}
+                
+                The result was: {"successful" if success else "unsuccessful"}
+                
+                Output: {output}
+                
+                Based on this result, provide a brief analysis (max 100 words) of what happened and what should be done next in the UI testing process:
+                """
+                ui_analysis = llm_client.generate_response(ui_analysis_prompt, 1000)
+                command_entry["ui_analysis"] = ui_analysis
+                print(f"UI Action Analysis:\n{ui_analysis}")
+
             else:
                 error_msg = f"Error: Invalid action: {action}"
                 print(error_msg)
@@ -2285,7 +2597,8 @@ def test_and_debug_mode(llm_client):
         else:
             print("Invalid response format. Please provide an action.")
             command_entry["error"] = "Invalid response format. Please provide an action."
-
+        
+        JustStarted = False
         test_progress = load_test_progress()
         iteration += 1
         save_command_history(command_history)
@@ -2493,6 +2806,28 @@ def generate():
         print("You can run the script again to continue from where it left off.")
 
 def main():
+    global frontend_testing_enabled, browser
+
+    parser = argparse.ArgumentParser(description="DevLM Bootstrap script")
+    parser.add_argument("--frontend", action="store_true", help="Enable frontend testing")
+    parser.add_argument(
+        "--mode", 
+        choices=["test", "generate"],  # Only allow 'test' or 'generate'
+        required=True,  # Make it mandatory to specify the mode
+        help="Specify the mode: 'test' or 'generate'."
+    )
+    args = parser.parse_args()
+
+    frontend_testing_enabled = args.frontend
+
+    if frontend_testing_enabled:
+        ensure_chrome_is_running()
+        if not connect_to_chrome():
+            print("Failed to connect to Chrome. Please check Chrome's status manually and restart the script.")
+            return
+        setup_frontend_testing()
+        atexit.register(teardown_frontend_testing)
+
     # Ensure chat file exists before entering any mode
     ensure_chat_file_exists()
 
@@ -2508,7 +2843,10 @@ def main():
             print("Please create a project_structure.json file manually before proceeding.")
             return
 
-    mode = input("Enter mode (generate/test): ").lower()
+    if args.mode:
+        mode = args.mode
+    else:   
+        mode = input("Enter mode (generate/test): ").lower()
     
     if mode == "test":
         test_and_debug_mode(llm_client)
@@ -2523,6 +2861,8 @@ if __name__ == "__main__":
         main()
     finally:
         kill_all_processes()
+        if frontend_testing_enabled:
+            teardown_frontend_testing()
 else:
     # For testing purposes
     __all__ = ['parse_changes', 'apply_changes']
