@@ -874,27 +874,24 @@ process_initial_outputs = {}
 import queue
 import psutil
 
-def check_and_terminate_existing_process(command):
-    cd_part, run_part = parse_compound_command(command)
-    process_key = get_process_key(command)
-    
-    # Change to the target directory if specified
-    original_dir = os.getcwd()
-    if cd_part:
-        target_dir = cd_part.split(None, 1)[1]
-        os.chdir(target_dir)
-    
+def get_all_child_processes(parent_pid):
     try:
-        # Use pgrep to find the process ID
-        pgrep_command = f"pgrep -f '{run_part}'"
-        result = subprocess.run(pgrep_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        
-        if result.returncode == 0:
-            pids = [int(pid) for pid in result.stdout.strip().split()]
-            for pid in pids:
+        parent = psutil.Process(parent_pid)
+        children = parent.children(recursive=True)
+        return children
+    except psutil.NoSuchProcess:
+        return []
+
+def check_and_terminate_existing_process(command):
+    global running_processes
+    
+    for process_info in running_processes:
+        if process_info['cmd'] == command:
+            pids_to_terminate = process_info['child_pids'] + [process_info['pid']]
+            for pid in pids_to_terminate:
                 try:
                     process = psutil.Process(pid)
-                    print(f"Process '{process_key}' (PID: {pid}) is already running. Terminating it.")
+                    print(f"Terminating process with PID: {pid}")
                     process.terminate()
                     
                     try:
@@ -909,11 +906,10 @@ def check_and_terminate_existing_process(command):
                 except psutil.AccessDenied:
                     print(f"Access denied when trying to terminate process {pid}.")
             
+            # Remove the terminated process from the list
+            running_processes = [p for p in running_processes if p['pid'] != process_info['pid']]
             time.sleep(2)  # Wait for 2 seconds to ensure resources are released
             return True
-    finally:
-        # Change back to the original directory
-        os.chdir(original_dir)
     
     return False
 
@@ -962,21 +958,27 @@ def run_continuous_process(command):
         threading.Thread(target=enqueue_output, args=(process.stdout, output_queue), daemon=True).start()
         threading.Thread(target=enqueue_output, args=(process.stderr, output_queue), daemon=True).start()
         
-        # Remove any old entries with the same command
-        global running_processes
-        running_processes = [p for p in running_processes if p['cmd'] != command]
+        # Wait for the process to start and get all child processes
+        time.sleep(5)
+        child_processes = get_all_child_processes(process.pid)
+        child_pids = [child.pid for child in child_processes]
         
         # Add the new process to the list
-        running_processes.append({
+        process_info = {
             "cmd": command,
             "process": process,
             "queue": output_queue,
             "cwd": cwd,
-            "run_command": run_command
-        })
+            "run_command": run_command,
+            "pid": process.pid,
+            "child_pids": child_pids
+        }
+        running_processes.append(process_info)
         
-        # Wait for 10 seconds and collect initial output
-        time.sleep(10)
+        # Print the process info
+        print(f"Process Info: {process_info}")
+        
+        # Collect initial output
         initial_output = ""
         while not output_queue.empty():
             initial_output += output_queue.get_nowait()
@@ -984,7 +986,7 @@ def run_continuous_process(command):
         # Keep only the last 2000 characters of the initial output
         initial_output = initial_output[-2000:]
         
-        return f"Started new process: {command}\nInitial output:\n{initial_output}"
+        return f"Started new process: {command}\nInitial PID: {process.pid}\nChild PIDs: {child_pids}\nInitial output:\n{initial_output}"
     except PermissionError as e:
         error_output = f"PermissionError: {str(e)}\n"
         if run_command.endswith('.go'):
@@ -1004,28 +1006,23 @@ def run_continuous_process(command):
 
 def check_process_output(command):
     process_key = get_process_key(command)
-    for process_info in running_processes:
+    for process_info in running_processes[:]:  # Iterate over a copy of the list
         if process_key in process_info["cmd"]:
             process = process_info["process"]
             output_queue = process_info["queue"]
-            
             if process.poll() is not None:
                 running_processes.remove(process_info)
-                return f"Process '{command}' has terminated.", ""
-            
+                return "", ""  # Process has terminated
             output = ""
             while not output_queue.empty():
                 try:
                     output += output_queue.get_nowait()
                 except queue.Empty:
                     break
-            
             # Keep only the last 2000 characters
-            output = output[-2000:]
-            
-            return f"Process '{command}' is running.", output
-    
-    return f"No running process found for command: {command}", ""
+            output = output[-3000:]
+            return command, output  # Process is running
+    return "", ""  # No running process found
 
 def restart_process(cmd):
     global running_processes
@@ -1294,8 +1291,8 @@ def extract_content(response_text, file_path):
         print(f"Warning: Unknown file extension '{file_extension}' for file '{file_path}'. Treating as plain text.")
         return response_text.strip()
 
-def get_last_10_iterations(command_history):
-    return command_history[-15:] if len(command_history) > 15 else command_history
+def get_last_n_iterations(command_history, count):
+    return command_history[-count:] if len(command_history) > count else command_history
 
 llm_notes = {
     "general": "",
@@ -1625,10 +1622,10 @@ def update_history_brief(command_history: List[Dict], current_brief: Dict, user_
     
     Current user goal: {user_goal}
 
-    Current project structure:
+    Project structure:
     {json.dumps(project_structure, indent=2)}
 
-    Current command history brief:
+    Current action history brief:
     {json.dumps(current_brief, indent=2)}
 
     Recent user chat content:
@@ -1638,17 +1635,15 @@ def update_history_brief(command_history: List[Dict], current_brief: Dict, user_
     {json.dumps(recent_commands, indent=2)}
 
     Please update the history brief with the following guidelines:
-    1. List key events or milestones (max 20 items).
-    2. Include any recurring issues or challenges.
-    3. Highlight successful implementations or resolved problems.
-    4. Note any significant changes in project direction or scope.
-    5. Mention any external factors affecting the project (e.g., API changes, library updates).
+    1. In context of the user chat content, extract key events and summarize the project's progress.
+    2. Keep crucial events from the current brief so that the history is maintained and actions are repeated.
 
     Respond with a JSON object in the following format without any other text:
     {{
         "key_events": [
-            "Event 1",
-            "Event 2",
+            "Issue X was resolved by modifying file Y.",
+            "Feature A was implemented by adding a new function in file B.",
+            "Issue Y was identified during testing in file Z and needs to be fixed.",
             ...
         ]
     }}
@@ -1872,10 +1867,10 @@ def ui_check_console_logs(expected_log):
         expected_log_found = any(expected_log in log['message'] for log in logs)
         
         if expected_log_found:
-            result = f"Found expected log: {expected_log}"
+            result = ""
             success = True
         else:
-            result = f"Expected log not found: {expected_log}"
+            result = ""
             success = False
         
         return f"{result}\n\nLast 2000 characters of logs:\n{last_2000_chars}", success
@@ -1925,9 +1920,10 @@ def handle_ui_action(command):
         return "Frontend testing is not enabled.", False
     
 HasUserInterrupted = False
+user_suggestion = ""
 
 def test_and_debug_mode(llm_client):
-    global unchanged_files, last_inspected_files
+    global unchanged_files, last_inspected_files, user_suggestion
 
     JustStarted = True
     
@@ -1975,12 +1971,13 @@ def test_and_debug_mode(llm_client):
 
     global HasUserInterrupted
     def handle_interrupt(signum, frame):
-        global HasUserInterrupted
+        global HasUserInterrupted, user_suggestion
         if HasUserInterrupted:
             print("\nSecond Ctrl+C received. Exiting the program.")
             kill_all_processes()
             sys.exit(0)
         HasUserInterrupted = True
+        user_suggestion = handle_user_suggestion()
 
     # Set up the signal handler
     signal.signal(signal.SIGINT, handle_interrupt)
@@ -1993,21 +1990,22 @@ def test_and_debug_mode(llm_client):
     # Previous action analysis
     previous_action_analysis = None
     ModifiedFile = False
-
+    user_suggestion = ""
     while True:
         # Check for chat updates at the start of each iteration
         # check_all_processes()
         retry_with_expert = False
         relative_iteration = iteration - start_iteration + 1
-        if HasUserInterrupted:
-            user_suggestion = handle_user_suggestion()
+        # if HasUserInterrupted:
+        #     user_suggestion = handle_user_suggestion()
 
         if check_chat_updates():
             chat_updated_iteration = iteration
             print("Chat file updated. Pausing...")
             wait_for_user_input()
 
-        last_10_iterations = get_last_10_iterations(command_history)
+        last_actions_context_count = 20
+        last_n_iterations = get_last_n_iterations(command_history, last_actions_context_count)
 
         # Update history brief every 10 iterations
         if relative_iteration % UPDATE_INTERVAL == 1:
@@ -2025,7 +2023,7 @@ def test_and_debug_mode(llm_client):
                 continue  # Skip terminated processes
             process_status.append(status)
             if output:
-                process_outputs.append(f"Latest output from '{process_info['cmd']}':\n{output[-2000:]}")
+                process_outputs.append(f"Latest output from '{process_info['cmd']}':\n{output[-3000:]}")
 
         history_brief_prompt = get_history_brief_for_prompt(history_brief)
 
@@ -2038,20 +2036,16 @@ def test_and_debug_mode(llm_client):
         Project Structure:
         {json.dumps(project_structure, indent=2)}
 
-        Command History (last 10 commands):
-        {json.dumps(last_10_iterations, indent=2)}
+        User Chat: 
+        {last_chat_content}
 
-        Command history brief:
+        Action history brief:
         {history_brief_prompt}
 
-        Administrator's Notes: 
-        {last_chat_content}
-        
-        {"Administrator suggestions for this action: " + user_suggestion if HasUserInterrupted else ""}
+        Last {last_actions_context_count} actions:
+        {json.dumps(last_n_iterations, indent=2)}
 
-        {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
-
-        Process Status:
+        Running processes:
         {', '.join(process_status)}
 
         Latest Process Outputs:
@@ -2062,16 +2056,17 @@ def test_and_debug_mode(llm_client):
         {"This session just started, processes that were started in the previous session have been terminated." if JustStarted else ""}
 
         Directives:
-        CRITICAL: Use the command history (especially the previous command) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
+        CRITICAL: Use the previous actions (especially the most recent action) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
         0. Follow a continuous development, integration, and testing workflow. Do This includes writing code, testing, debugging, and fixing issues.
-        0. Put higher emphasis on the result/anlysis from the last iteration to make progress.
-        1. When doing development, consider reading multiple files to better integrate the current file with the rest of the project.
-        2. Never change code due to development environmental factors (ports, paths, etc.) unless explicitly mentioned in the prompt.
-        3. If there are environment related issue, use raw commands to fix them.
-        4. Use the files in the project structure to understand the context and provide accurate responses. Do not add new files.
-        5. Make sure that we're making progress with each step. If we go around in circles, assume that debug is wrong and start from the beginning.
-        6. Do not repeat the same action multiple times unless absolutely necessary.
-        7. RESTART a process after making changes to the code. This is crucial for the changes to take effect.
+        1. Put higher emphasis on the result/anlysis from the last iteration to make progress.
+        2. When doing development, consider reading multiple files to better integrate the current file with the rest of the project.
+        3. Never change code due to development environmental factors (ports, paths, etc.) unless explicitly mentioned in the prompt.
+        4. If there are environment related issue, use raw commands to fix them.
+        5. Use the files in the project structure to understand the context and provide accurate responses. Do not add new files.
+        6. Make sure that we're making progress with each step. If we go around in circles, assume that debug is wrong and start from the beginning.
+        7. Do not repeat the same action multiple times unless absolutely necessary.
+        8. RESTART a process after making changes to the code. This is crucial for the changes to take effect.
+        9. If something is not working, first assume that the process was not restarted after the code change or it has terminated unexpectedly. RESTART the process and check again.
          
         You can take the following actions:
 
@@ -2093,12 +2088,16 @@ def test_and_debug_mode(llm_client):
         Current URL: {current_url if current_url else "No URL opened yet"}
         ''' if frontend_testing_enabled else ''}
 
+        {"Administrator suggestions for this action: " + user_suggestion if HasUserInterrupted else ""}
+
+        {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
+
         Provide your response in the following format:
         ACTION: <your chosen action>
-        GOALS: <Context for the goals are when your executing the command>
+        GOAL: <Provide this goal as context for when you're executing the actual command (max 80 words>
         REASON: <Provide this as reason and context for when you're executing the actual command (max 80 words)>
 
-        What would you like to do next to progress towards project completion?
+        What would you like to do next to progress towards administrators notes and project completion?
         """
         # - Check element text (Use to debug contents of an element): "UI_CHECK_TEXT: <element_id>: <expected_text>"
         # if running_processes:
@@ -2111,6 +2110,7 @@ def test_and_debug_mode(llm_client):
         previous_action_analysis = None
 
         # For debug, print the process outputs been provided
+        print(f"Running processes for debug: {process_status}")
         print(f"Process outputs for debug: {process_outputs}")
         
         
@@ -2130,10 +2130,16 @@ def test_and_debug_mode(llm_client):
             action = action_match.group(1).strip()
             reason = reason_match.group(1).strip() if reason_match else "No reason provided"
             goals = goals_match.group(1).strip() if goals_match else "No goals provided"
-            command_entry = {"iteration": iteration, "action": action, "reason": reason, "goals": goals}
+            command_entry = {"count": iteration, "action": action, "reason": reason, "goal": goals}
+            if user_suggestion != "":
+                command_entry["user_suggestion"] = user_suggestion
+                user_suggestion = ""
+                
             command_entry["process_outputs"] = process_outputs
             if JustStarted:
                 command_entry["restart"] = "The session just started, processes that were started in the previous session have been terminated."
+
+
             if notes_match:
                 new_notes = notes_match.group(1).strip()
                 command_entry["notes_updated"] = True 
@@ -2268,7 +2274,7 @@ def test_and_debug_mode(llm_client):
 
                 Goals given for this action: {goals}
 
-                Command history (last 10 commands) for better context: {json.dumps(last_10_iterations, indent=2)}
+                Command history (last 10 commands) for better context: {json.dumps(last_n_iterations, indent=2)}
 
                 Summarize the changes made to the file {file_path}. Compare the original content:
                 {current_content}
@@ -2301,7 +2307,7 @@ def test_and_debug_mode(llm_client):
 
                 # Check if the file is in the unchanged_files list and still under constraint
                 if write_file in unchanged_files and unchanged_files[write_file] > 0:
-                    error_msg = f"Error: The file {write_file} cannot be modified for {unchanged_files[write_file]} more iterations due to no changes in the previous attempt."
+                    error_msg = f"Error: The file {write_file} cannot be modified for {unchanged_files[write_file]} more iterations (this iteration won't count) due to no changes in the previous attempt. Use other actions such as INSPECT to increase the count."
                     command_entry["error"] = error_msg
                     print(error_msg)
                     command_history.append(command_entry)
@@ -2333,7 +2339,7 @@ def test_and_debug_mode(llm_client):
                             command_entry["error"] += error_msg
                     else:
                         content = read_file(file_path)
-                        # numbered_content = add_line_numbers(content)
+                        content = add_line_numbers(content)
                         file_contents[file_path] = content
 
                 if write_file not in file_contents or file_contents[write_file].startswith("Error: File not found"):
@@ -2418,7 +2424,7 @@ def test_and_debug_mode(llm_client):
 
                 Goals given for this action: {goals}
 
-                Command history (last 10 commands) for better context: {json.dumps(last_10_iterations, indent=2)}
+                Command history (last 10 commands) for better context: {json.dumps(last_n_iterations, indent=2)}
 
                 Summarize the changes made to the file {write_file} for future notes to yourself. Compare the original content:
                 {read_file(write_file)}
