@@ -1734,28 +1734,25 @@ def ensure_chrome_is_running():
     if not diagnose_chrome_connection():
         print("Chrome DevTools is not accessible. Please check Chrome's status manually.")
 
+from selenium.webdriver.chrome.options import Options
 
 def setup_frontend_testing():
     global browser
     try:
         print("Setting up frontend testing...")
-        
-        # Instructions for manually starting Chrome
-        print("Please start Chrome manually with remote debugging enabled.")
-        print("Run this command in a new terminal:")
-        print("google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-testing")
-        print("Press Enter when Chrome is running...")
-        input()
 
         # Set up Chrome options for connecting to the running instance
         chrome_options = Options()
         chrome_options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
+
+        # Enable performance logging
+        chrome_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
         
         # Connect to the running Chrome instance
         service = Service()  # You might need to specify the path to chromedriver here
         browser = webdriver.Chrome(service=service, options=chrome_options)
+        browser.execute_cdp_cmd('Network.enable', {})
         
-        print("Connected to Chrome browser for UI testing")
     except Exception as e:
         print(f"Error setting up frontend testing: {str(e)}")
         print("\nTroubleshooting steps:")
@@ -1763,7 +1760,6 @@ def setup_frontend_testing():
         print("2. Make sure no other Chrome instances are using the debugging port (9222).")
         print("3. If you're still having issues, try running the script with sudo:")
         print("   sudo python3 bootstrap.py --mode test --frontend")
-        print("4. If the problem persists, please provide the full error message for further assistance.")
         sys.exit(1)
 
 def teardown_frontend_testing():
@@ -1830,15 +1826,50 @@ def ui_open_url(url):
 
 def ui_click_button(button_id):
     if not frontend_testing_enabled:
-        return "Frontend testing is not enabled."
+        return "Frontend testing is not enabled.", False
     try:
+        # Start capturing XHR requests if not already capturing
+        capture_started = False
+        if not xhr_capture_thread or not xhr_capture_thread.is_alive():
+            ui_xhr_capture_start()
+            capture_started = True
+
+        # Clear console logs before clicking
+        browser.get_log('browser')
+
+        # Click the button
         button = WebDriverWait(browser, 10).until(
             EC.element_to_be_clickable((By.ID, button_id))
         )
         button.click()
-        return f"Clicked button with ID: {button_id}"
+
+        # Wait for 5 seconds to capture XHR requests and console logs
+        time.sleep(5)
+
+        # Capture console logs
+        console_logs = browser.get_log('browser')
+
+        # Stop capturing if we started it
+        if capture_started:
+            xhr_result, _ = ui_xhr_capture_stop()
+        else:
+            xhr_result = "XHR capture was already running."
+
+        # Format console logs and limit to last 3000 characters
+        formatted_logs = "\n".join([f"[{log['level']}] {log['message']}" for log in console_logs])
+        formatted_logs = formatted_logs[-3000:]  # Limit to last 3000 characters
+
+        return f"""Clicked button with ID: {button_id}
+
+XHR Requests:
+{xhr_result}
+
+Console Logs (last 3000 characters):
+{formatted_logs}""", True
+
     except Exception as e:
-        return f"Error clicking button: {str(e)}"
+        ui_xhr_capture_stop()
+        return f"Error clicking button: {str(e)}", False
 
 def ui_check_element_text(element_id, expected_text):
     if not frontend_testing_enabled:
@@ -1876,6 +1907,69 @@ def ui_check_console_logs(expected_log):
         return f"{result}\n\nLast 2000 characters of logs:\n{last_2000_chars}", success
     except Exception as e:
         return f"Error checking console logs: {str(e)}\n\nUnable to retrieve logs.", False
+
+import threading
+
+# Global variables for XHR capture
+xhr_capture_thread = None
+xhr_capture_event = threading.Event()
+captured_xhr_requests = []
+
+def capture_xhr_requests():
+    global captured_xhr_requests
+
+    def request_will_be_sent(params):
+        request = params['request']
+        if request['method'] != 'OPTIONS':  # Filter out OPTIONS requests
+            captured_xhr_requests.append({
+                'url': request['url'],
+                'method': request['method'],
+                'timestamp': time.time()
+            })
+
+    def response_received(params):
+        response = params['response']
+        request = next((req for req in captured_xhr_requests if req['url'] == response['url']), None)
+        if request:
+            request['status'] = response['status']
+
+    browser.add_cdp_event_listener('Network.requestWillBeSent', request_will_be_sent)
+    browser.add_cdp_event_listener('Network.responseReceived', response_received)
+
+    while not xhr_capture_event.is_set():
+        time.sleep(0.1)
+
+    browser.remove_cdp_listener('Network.requestWillBeSent', request_will_be_sent)
+    browser.remove_cdp_listener('Network.responseReceived', response_received)
+
+def ui_xhr_capture_start():
+    global xhr_capture_thread, xhr_capture_event, captured_xhr_requests
+    if not frontend_testing_enabled:
+        return "Frontend testing is not enabled.", False
+    
+    if xhr_capture_thread and xhr_capture_thread.is_alive():
+        return "XHR capture is already running.", False
+    
+    xhr_capture_event.clear()
+    captured_xhr_requests = []
+    xhr_capture_thread = threading.Thread(target=capture_xhr_requests)
+    xhr_capture_thread.start()
+    return "XHR capture started.", True
+
+def ui_xhr_capture_stop():
+    global xhr_capture_thread, xhr_capture_event, captured_xhr_requests
+    if not frontend_testing_enabled:
+        return "Frontend testing is not enabled.", False
+    
+    if not xhr_capture_thread or not xhr_capture_thread.is_alive():
+        return "No active XHR capture to stop.", False
+    
+    xhr_capture_event.set()
+    xhr_capture_thread.join()
+    xhr_capture_thread = None
+    
+    capture_result = json.dumps(captured_xhr_requests, indent=2)
+    return f"XHR capture stopped. Captured requests:\n{capture_result}", True
     
 def ensure_chrome_is_running():
     try:
@@ -1905,7 +1999,7 @@ def handle_ui_action(command):
             return ui_open_url(url)
         elif command.upper().startswith("UI_CLICK:"):
             button_id = command.split(":", 1)[1].strip()
-            return ui_click_button(button_id), True
+            return ui_click_button(button_id)
         elif command.upper().startswith("UI_CHECK_TEXT:"):
             parts = command.split(":", 2)
             element_id = parts[1].strip()
@@ -1914,6 +2008,15 @@ def handle_ui_action(command):
         elif command.upper().startswith("UI_CHECK_LOG:"):
             expected_log = command.split(":", 1)[1].strip()
             return ui_check_console_logs(expected_log)
+        elif command.upper().startswith("UI_CHECK_XHR:"):
+            parts = command.split(":", 3)
+            expected_url = parts[1].strip() if len(parts) > 1 else None
+            expected_method = parts[2].strip() if len(parts) > 2 else None
+            return ui_check_xhr_requests(expected_url, expected_method)
+        elif command.upper() == "UI_XHR_CAPTURE_START":
+            return ui_xhr_capture_start()
+        elif command.upper() == "UI_XHR_CAPTURE_STOP":
+            return ui_xhr_capture_stop()
         else:
             return f"Unknown UI action: {command}", False
     else:
@@ -2045,7 +2148,7 @@ def test_and_debug_mode(llm_client):
         Last {last_actions_context_count} actions:
         {json.dumps(last_n_iterations, indent=2)}
 
-        Running processes:
+        Running processes (make sure the ones needed are running):
         {', '.join(process_status)}
 
         Latest Process Outputs:
@@ -2082,8 +2185,10 @@ def test_and_debug_mode(llm_client):
         {f'''
         10. UI Debugging and Testing Actions:
             - Open a URL: "UI_OPEN: <url>"
-            - Check console logs (Use this to debug and check if the page loaded correctly): "UI_CHECK_LOG: <expected_log_message>"
-            - Click a button: "UI_CLICK: <button_id>"  
+            - Check console logs (Used to debug and check if the page loaded correctly): "UI_CHECK_LOG: <expected_log_message>"
+            - Click a button (with 5-second XHR capture): "UI_CLICK: <button_id>"
+            - Start XHR network capture: "UI_XHR_CAPTURE_START"
+            - Stop XHR network capture and get results: "UI_XHR_CAPTURE_STOP"
         
         Current URL: {current_url if current_url else "No URL opened yet"}
         ''' if frontend_testing_enabled else ''}
@@ -2441,12 +2546,12 @@ def test_and_debug_mode(llm_client):
                 changes_made = compare_and_write(write_file, extracted_content)
                 if not changes_made:
                     print("Warning: No actual changes were made in this iteration.")
-                    command_entry["result"] = {"warning": "No actual changes were made in this iteration."}
+                    command_entry["result"] = {"warning": "No actual changes were made in this iteration. Use INSPECT to check what changes are needed."}
 
                     # Add the file to unchanged_files with a counter of 2
                     unchanged_files[write_file] = 2
 
-                    command_entry["error"] = f"The file {write_file} cannot be modified for the next 2 successful iterations due to no changes in this attempt."
+                    command_entry["error"] = f"The file {write_file} cannot be modified for the next 2 successful iterations due to no changes in this attempt. Use INSPECT to increase the count."
 
                     command_history.append(command_entry)
                     save_command_history(command_history)
@@ -2867,8 +2972,8 @@ if __name__ == "__main__":
         main()
     finally:
         kill_all_processes()
-        if frontend_testing_enabled:
-            teardown_frontend_testing()
+        # if frontend_testing_enabled:
+        #     teardown_frontend_testing()
 else:
     # For testing purposes
     __all__ = ['parse_changes', 'apply_changes']
