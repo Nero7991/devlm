@@ -1,3 +1,25 @@
+# MIT License
+# 
+# Copyright (c) 2024 Oren Collaco
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 import abc
 import time
 from typing import Dict, Any
@@ -26,12 +48,22 @@ from typing import Optional
 import psutil
 import difflib
 import argparse
+import queue
+import psutil
+from typing import List, Dict
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+
+# Global variables for model and source settings
+MODEL = 'claude'  # Default to 'claude'
+SOURCE = 'anthropic'  # Default to 'anthropic'
+API_KEY = None
+PROJECT_ID = None
+REGION = None
 
 try:
     import anthropic
@@ -70,11 +102,6 @@ except Exception as e:
     print(f"Error setting up Google Cloud credentials: {str(e)}")
     print("Please make sure you have run 'gcloud auth application-default login' and have the necessary permissions.")
     sys.exit(1)
-
-# Replace with your actual API key
-API_KEY = "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"
-# API_KEY = "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"
-# API_KEY = "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" # CU
 
 class LLMError(Exception):
     def __init__(self, error_type, message):
@@ -137,10 +164,11 @@ class AnthropicLLM(LLMInterface):
             self._handle_credit_issue()
             return True
         elif error_type == 'internal_server_error':
-            if retries < self.max_retries:
-                wait_time = self._calculate_wait_time(retries)
+            if self.retries < self.max_retries:
+                wait_time = self._calculate_wait_time(self.retries)
                 print(f"Internal server error. Retrying in {wait_time} seconds...")
                 time.sleep(wait_time)
+                self.retries += 1
                 return True
             else:
                 return False
@@ -257,14 +285,15 @@ def get_llm_client(provider: str = "anthropic", model: Optional[str] = None) -> 
         return AnthropicLLM(anthropic.Anthropic(api_key=API_KEY))
     elif provider == "vertex_ai":
         # Replace with your actual Google Cloud project ID and region
-        project_id = "devlm-435701"
-        region = "us-east5"
+        #project_id = "devlm-435701"
+        project_id = PROJECT_ID
+        region = REGION
         return VertexAILLM(project_id, region, model)
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
 # Update the global llm_client variable
-llm_client = get_llm_client("vertex_ai")  # or "anthropic" based on your preference
+llm_client = None
 
 # llm_client = get_llm_client()
 
@@ -370,7 +399,6 @@ Limit your response to 200 words.
         parent_dir = os.path.dirname(directory_path)
         if parent_dir:
             update_directory_summary(brief, parent_dir)
-
 
 def review_project_structure(project_summary):
     current_structure = get_project_structure()
@@ -810,8 +838,6 @@ APPROVAL_REQUIRED_COMMANDS = [
     'RAW: <raw_command>'
 ]
 
-import subprocess
-
 def require_approval(command):
     print(f"The following command requires your approval:")
     print(command)
@@ -870,9 +896,6 @@ def kill_all_processes():
 atexit.register(kill_all_processes)
 
 process_initial_outputs = {}
-
-import queue
-import psutil
 
 def get_all_child_processes(parent_pid):
     try:
@@ -1234,7 +1257,8 @@ def get_file_technical_brief(technical_brief, file_path):
     
     return result
 
-COMMAND_HISTORY_FILE = "command_history.json"
+
+COMMAND_HISTORY_FILE = f"command_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
 def save_command_history(command_history):
     with open(COMMAND_HISTORY_FILE, 'w') as f:
@@ -1345,10 +1369,6 @@ def remove_line_numbers(numbered_content):
     content_lines = [line.split(':', 1)[1] if ':' in line else line for line in lines]
     return '\n'.join(content_lines)
 
-import tempfile
-import subprocess
-import os
-
 def create_git_patch(file_path, changes):
     patch_lines = [
         f"diff --git a/{file_path} b/{file_path}",
@@ -1437,7 +1457,6 @@ def apply_git_patch(file_path, patch_content):
         return False
     finally:
         os.unlink(temp_file_path)
-
 
 def parse_changes(changes_text):
     changes = []
@@ -1562,7 +1581,6 @@ def update_project_structure(file_path):
     with open('project_structure.json', 'w') as f:
         json.dump(project_structure, f, indent=2)
     
-# Add this new global variable
 unchanged_files = {}
 
 CHAT_FILE = "chat.txt"
@@ -1596,15 +1614,16 @@ def wait_for_user_input():
     last_chat_content = read_chat_file()
     chat_updated = False
 
-import json
-from typing import List, Dict
-
-HISTORY_BRIEF_FILE = "history_brief.json"
+HISTORY_BRIEF_FILE = f"history_brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 MAX_BRIEF_COMMANDS = 20
 UPDATE_INTERVAL = 10
 
 def load_history_brief() -> Dict:
     try:
+        # make sure the file exist else create it
+        if not os.path.exists(HISTORY_BRIEF_FILE):
+            with open(HISTORY_BRIEF_FILE, 'w') as f:
+                json.dump({}, f, indent=2)
         with open(HISTORY_BRIEF_FILE, 'r') as f:
             return json.load(f)
     except FileNotFoundError:
@@ -1619,17 +1638,6 @@ def update_history_brief(command_history: List[Dict], current_brief: Dict, user_
     
     update_prompt = f"""
     You are software developer tasked with maintaining a concise history brief of a software development project. Since you are only provided the last 15 raw commands, you need to extract key events and summarize the project's progress based on the command history and the previous brief. This will help in tracking the project's development and identifying any issues or challenges and prevent repetition of the same mistakes and work. Be specific and concise in your output so that the project's progress can be easily tracked.
-    
-    Current user goal: {user_goal}
-
-    Project structure:
-    {json.dumps(project_structure, indent=2)}
-
-    Current action history brief:
-    {json.dumps(current_brief, indent=2)}
-
-    Recent user chat content:
-    {chat_content}
 
     Recent command history (last 30 commands):
     {json.dumps(recent_commands, indent=2)}
@@ -1660,6 +1668,8 @@ def update_history_brief(command_history: List[Dict], current_brief: Dict, user_
         return current_brief
 
 def get_history_brief_for_prompt(brief: Dict) -> str:
+    if not brief.get('key_events'):
+        return "No key events recorded yet."
     return f"""
     Key Events:
     {chr(10).join(f"- {event}" for event in brief['key_events'])}
@@ -2008,11 +2018,11 @@ def handle_ui_action(command):
         elif command.upper().startswith("UI_CHECK_LOG:"):
             expected_log = command.split(":", 1)[1].strip()
             return ui_check_console_logs(expected_log)
-        elif command.upper().startswith("UI_CHECK_XHR:"):
-            parts = command.split(":", 3)
-            expected_url = parts[1].strip() if len(parts) > 1 else None
-            expected_method = parts[2].strip() if len(parts) > 2 else None
-            return ui_check_xhr_requests(expected_url, expected_method)
+        # elif command.upper().startswith("UI_CHECK_XHR:"):
+        #     parts = command.split(":", 3)
+        #     expected_url = parts[1].strip() if len(parts) > 1 else None
+        #     expected_method = parts[2].strip() if len(parts) > 2 else None
+        #     return ui_check_xhr_requests(expected_url, expected_method)
         elif command.upper() == "UI_XHR_CAPTURE_START":
             return ui_xhr_capture_start()
         elif command.upper() == "UI_XHR_CAPTURE_STOP":
@@ -2025,11 +2035,44 @@ def handle_ui_action(command):
 HasUserInterrupted = False
 user_suggestion = ""
 
+def generate_tree_structure(structure, prefix='', is_last=True):
+    output = []
+    items = list(structure.items())
+    
+    # Handle files in current directory
+    if "" in structure:
+        files = structure[""]
+        for i, file in enumerate(files):
+            is_last_file = (i == len(files) - 1) and (len(items) == 1 or (len(items) == 2 and "" in structure))
+            output.append(f"{prefix}{'└── ' if is_last_file else '├── '}{file}")
+        if len(items) > 1 or (len(items) == 1 and "" not in structure):
+            output.append(f"{prefix}{'└── ' if is_last else '├── '}.")
+    
+    # Handle subdirectories
+    subdirs = [d for d in structure.keys() if d != ""]
+    for i, (subdir, substructure) in enumerate(sorted(structure.items())):
+        if subdir != "":
+            is_last_subdir = i == len(subdirs) - 1
+            output.append(f"{prefix}{'└── ' if is_last_subdir else '├── '}{subdir}")
+            new_prefix = prefix + ('    ' if is_last_subdir else '│   ')
+            output.extend(generate_tree_structure(substructure, new_prefix, is_last_subdir))
+    
+    return output
+
+def get_tree_structure():
+    with open('project_structure.json', 'r') as f:
+        structure = json.load(f)
+    
+    tree = ['.'] + generate_tree_structure(structure)
+    return "\n".join(tree)
+
 def test_and_debug_mode(llm_client):
     global unchanged_files, last_inspected_files, user_suggestion
 
     JustStarted = True
     
+    global COMMAND_HISTORY_FILE
+    print(f"Created new command history file: {COMMAND_HISTORY_FILE}")
 
     # Add this function to handle unexpected terminations
     def handle_unexpected_termination(signum, frame):
@@ -2049,6 +2092,7 @@ def test_and_debug_mode(llm_client):
     test_progress = load_test_progress()
     command_history = load_command_history()
     history_brief = load_history_brief()
+    directory_tree_structure = get_tree_structure()
 
     
     print("Entering test and debug mode...")
@@ -2093,7 +2137,16 @@ def test_and_debug_mode(llm_client):
     # Previous action analysis
     previous_action_analysis = None
     ModifiedFile = False
-    user_suggestion = ""
+    if user_suggestion != "":
+        command_history.append({"user_message": user_suggestion})
+        save_command_history(command_history)
+
+    # Ask user for message on what user wants to do for this session
+    user_session_message = input("What would you like to accomplish in this session? ")
+    # Append this to the command history as the first message
+    command_history.append({"user_message": user_session_message})
+    save_command_history(command_history)
+    
     while True:
         # Check for chat updates at the start of each iteration
         # check_all_processes()
@@ -2111,7 +2164,7 @@ def test_and_debug_mode(llm_client):
         last_n_iterations = get_last_n_iterations(command_history, last_actions_context_count)
 
         # Update history brief every 10 iterations
-        if relative_iteration % UPDATE_INTERVAL == 1:
+        if relative_iteration % UPDATE_INTERVAL == 9:
             history_brief = update_history_brief(command_history, history_brief, project_summary, last_chat_content, project_structure)
             save_history_brief(history_brief)
             print("Updated history brief.")
@@ -2131,15 +2184,16 @@ def test_and_debug_mode(llm_client):
         history_brief_prompt = get_history_brief_for_prompt(history_brief)
 
         prompt = f"""
-        You are in test and debug mode for the project. You are a professional software architect and developer. Adhere to the directives, best practices and provide accurate responses based on the project context. You can refer to the project summary, technical brief, and project structure for information.
+        You are in develop, test and debug mode for the project. You are a professional software architect, developer and tester. Adhere to the directives, best practices and provide accurate responses based on the project context. You can refer to the project summary, technical brief, and project structure for information.
 
+        <Project Context>
         Project Summary:
         {project_summary}
 
-        Project Structure:
-        {json.dumps(project_structure, indent=2)}
+        Project Structure (you're always in the root directory and cannot navigate to other directories, but can add cd <directory_path> to run commands that need to be run in a specific directory):
+        {directory_tree_structure}
 
-        User Chat: 
+        User notes: 
         {last_chat_content}
 
         Action history brief:
@@ -2148,8 +2202,7 @@ def test_and_debug_mode(llm_client):
         Last {last_actions_context_count} actions:
         {json.dumps(last_n_iterations, indent=2)}
 
-        Running processes (make sure the ones needed are running):
-        {', '.join(process_status)}
+        {f"Currently running processes (make sure the ones needed are running): {', '.join(process_status)}" if process_status else "No running processes."}
 
         Latest Process Outputs:
         {', '.join(process_outputs) if process_outputs else "No new output from background processes."}
@@ -2157,8 +2210,8 @@ def test_and_debug_mode(llm_client):
         {"You modified a file in the previous iteration. If you are done with code changes and moving to testing, remember to start/restart the appropriate process using INDEF/RESTART " if ModifiedFile else ""}
 
         {"This session just started, processes that were started in the previous session have been terminated." if JustStarted else ""}
-
-        Directives:
+        </Project Context>
+        <Directives>
         CRITICAL: Use the previous actions (especially the most recent action) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
         0. Follow a continuous development, integration, and testing workflow. Do This includes writing code, testing, debugging, and fixing issues.
         1. Put higher emphasis on the result/anlysis from the last iteration to make progress.
@@ -2170,16 +2223,17 @@ def test_and_debug_mode(llm_client):
         7. Do not repeat the same action multiple times unless absolutely necessary.
         8. RESTART a process after making changes to the code. This is crucial for the changes to take effect.
         9. If something is not working, first assume that the process was not restarted after the code change or it has terminated unexpectedly. RESTART the process and check again.
-         
+        </Directives>
+
         You can take the following actions:
 
         1. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} syncronously (blocking), use: "RUN: {', '.join(ALLOWED_COMMANDS)}". The script will wait for the command to finish and provide you with the output.
         2. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} asyncronously (non-blocking), use: "INDEF: <command>". This will run the command in the background and provide you with the initial output.
         3. Run a raw command that requires approval, use: "RAW: <raw_command>". This will run the command in the shell and provide you with the output. You can use this for any command that is not in the allowed list.
-        4. Check the output current running process using "CHECK: <command>"
-        5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..."
-        6. Inspect multiple files (minimum: 4, maximum: 4) and modify one (one of the files that being inspected only) by replying with "MULTI: <file_path1>, <file_path2>, <file_path3>, <file_path4>; MODIFY: <file_path(1,2,3,4)>" 
-        7. Ask the user for help by replying with "HELP: <your question>". Do this when you see that no progress is being made.
+        4. Check the output of a running process using "CHECK: <command>"
+        5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..." and get the analysis of the files based on the reason and goals.
+        6. Modify one file (one of the files that being read only) (maximum: 4) and read four files by replying with "MULTI: <file_path1>, <file_path2>, <file_path3>, <file_path4>; MODIFY: <file_path(1,2,3,4)>" 
+        7. Chat with the user for help or to give feedback by replying with "CHAT: <your question/feedback>". Do this when you see that no progress is being made.
         8. Restart a running process with "RESTART: <command>"
         9. Finish testing by replying with "DONE"
         {f'''
@@ -2202,7 +2256,7 @@ def test_and_debug_mode(llm_client):
         GOAL: <Provide this goal as context for when you're executing the actual command (max 80 words>
         REASON: <Provide this as reason and context for when you're executing the actual command (max 80 words)>
 
-        What would you like to do next to progress towards administrators notes and project completion?
+        What would you like to do next to progress towards user message? Once the user message is accomplished, use "CHAT" to ask for feedback, if they say, there is nothing else to do, use "DONE". Use Chain of Thought (CoT) in project context, past actions/chat and directives to decide the next action. Think why the chosen action is the correct one, that you've considered the directives and previous actions. CoT can be included in <CoT> tags.
         """
         # - Check element text (Use to debug contents of an element): "UI_CHECK_TEXT: <element_id>: <expected_text>"
         # if running_processes:
@@ -2237,7 +2291,7 @@ def test_and_debug_mode(llm_client):
             goals = goals_match.group(1).strip() if goals_match else "No goals provided"
             command_entry = {"count": iteration, "action": action, "reason": reason, "goal": goals}
             if user_suggestion != "":
-                command_entry["user_suggestion"] = user_suggestion
+                command_entry["user_message"] = user_suggestion
                 user_suggestion = ""
                 
             command_entry["process_outputs"] = process_outputs
@@ -2257,7 +2311,7 @@ def test_and_debug_mode(llm_client):
                 print(f"Updated notes:\n{json.dumps(llm_notes, indent=2)}")
                 command_entry["notes_updated"] = True
 
-            elif action.upper().startswith("HELP:"):
+            elif action.upper().startswith("CHAT:"):
                 question = action.split(":")[1].strip()
                 print(f"\nAsking for help with the question: {question}")
                 user_response = input("Please provide your response to the model's question: ")        
@@ -2916,20 +2970,105 @@ def generate():
         print(f"Reached maximum iterations ({max_iterations}) or encountered errors")
         print("You can run the script again to continue from where it left off.")
 
+def load_env_variables():
+    env_file = 'devlm.env'
+    if os.path.exists(env_file):
+        with open(env_file, 'r') as f:
+            for line in f:
+                if line.strip() and not line.startswith('#'):
+                    key, value = line.strip().split('=', 1)
+                    os.environ[key] = value
+    
+    global MODEL, SOURCE, API_KEY, PROJECT_ID, REGION
+    
+    if MODEL.lower() == 'claude':
+        if SOURCE.lower() == 'gcloud':
+            if not PROJECT_ID or not REGION:
+                PROJECT_ID = PROJECT_ID or os.environ.get('PROJECT_ID')
+                REGION = REGION or os.environ.get('REGION')
+                if not PROJECT_ID or not REGION:
+                    print("Error: PROJECT_ID and REGION must be provided either as command-line arguments or set in the .env file when using Claude with Google Cloud.")
+                    exit(1)
+            print(f"Using Claude via Google Cloud. Project ID: {PROJECT_ID}, Region: {REGION}")
+        elif SOURCE.lower() == 'anthropic':
+            if not API_KEY:
+                API_KEY = API_KEY or os.environ.get('API_KEY')
+                if not API_KEY:
+                    print("Error: API_KEY must be provided either as a command-line argument or set in the .env file when using Claude with Anthropic.")
+                    exit(1)
+            print("Using Claude via Anthropic API.")
+        else:
+            print(f"Error: Invalid SOURCE '{SOURCE}' for MODEL 'claude'. Must be 'gcloud' or 'anthropic'.")
+            exit(1)
+    else:
+        print(f"Error: Unsupported MODEL '{MODEL}'. Currently only 'claude' is supported.")
+        exit(1)
+
 def main():
-    global frontend_testing_enabled, browser
+    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION
 
     parser = argparse.ArgumentParser(description="DevLM Bootstrap script")
     parser.add_argument("--frontend", action="store_true", help="Enable frontend testing")
     parser.add_argument(
         "--mode", 
-        choices=["test", "generate"],  # Only allow 'test' or 'generate'
-        required=True,  # Make it mandatory to specify the mode
+        choices=["test", "generate"],
+        required=True,
         help="Specify the mode: 'test' or 'generate'."
+    )
+    parser.add_argument(
+        "--model",
+        default="claude",
+        help="Specify the model to use (default: claude)"
+    )
+    parser.add_argument(
+        "--source",
+        choices=["gcloud", "anthropic"],
+        default="anthropic",
+        help="Specify the source for the model: 'gcloud' or 'anthropic' (default: anthropic)"
+    )
+    parser.add_argument(
+        "--api-key",
+        help="Specify the API key for Anthropic (only used if source is 'anthropic')"
+    )
+    parser.add_argument(
+        "--project-id",
+        help="Specify the Google Cloud project ID (only used if source is 'gcloud')"
+    )
+    parser.add_argument(
+        "--region",
+        help="Specify the Google Cloud region (only used if source is 'gcloud')"
     )
     args = parser.parse_args()
 
+    MODEL = args.model
+    SOURCE = args.source
+    API_KEY = args.api_key
+    PROJECT_ID = args.project_id
+    REGION = args.region
+
     frontend_testing_enabled = args.frontend
+
+    # Load environment variables and validate settings
+    load_env_variables()
+
+    # Check all variables are set based on source and model
+    if SOURCE == 'gcloud':
+        if not PROJECT_ID or not REGION:
+            print("Error: PROJECT_ID and REGION must be provided either as command-line arguments or set in the .env file when using Claude with Google Cloud.")
+            exit(1)
+    elif SOURCE == 'anthropic':
+        if not API_KEY:
+            print("Error: API_KEY must be provided either as a command-line argument or set in the .env file when using Claude with Anthropic.")
+            exit(1)
+
+    # Initialize the LLM client based on the source
+    if SOURCE == 'gcloud':
+        llm_client = get_llm_client("vertex_ai")  # or "anthropic" based on your preference
+    elif SOURCE == 'anthropic':
+        llm_client = get_llm_client("anthropic")
+    else:
+        print(f"Error: Invalid SOURCE '{SOURCE}' for MODEL 'claude'. Must be 'gcloud' or 'anthropic'.")
+        exit(1)
 
     if frontend_testing_enabled:
         ensure_chrome_is_running()
