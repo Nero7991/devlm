@@ -65,42 +65,14 @@ API_KEY = None
 PROJECT_ID = None
 REGION = None
 
+# Define the devlm folder path
+DEVLM_FOLDER = ".devlm"
+
 try:
     import anthropic
     from anthropic import AnthropicVertex
 except ImportError:
     print("Error: anthropic package is not installed. Please run: pip install anthropic[vertex]")
-    sys.exit(1)
-
-try:
-    from google.auth import default
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
-    from google.cloud import aiplatform
-except ImportError:
-    print("Error: Google Cloud packages are not installed. Please run:")
-    print("pip install --upgrade google-auth google-auth-oauthlib google-auth-httplib2 google-cloud-aiplatform")
-    sys.exit(1)
-
-# Set up Google Cloud credentials
-credentials, project = default()
-if not credentials.valid:
-    if credentials.expired and credentials.refresh_token:
-        credentials.refresh(Request())
-    else:
-        raise ValueError("Invalid Google Cloud credentials. Please run 'gcloud auth application-default login'")
-
-# Set up Google Cloud credentials
-try:
-    credentials, project = default()
-    if not credentials.valid:
-        if credentials.expired and credentials.refresh_token:
-            credentials.refresh(Request())
-        else:
-            raise ValueError("Invalid Google Cloud credentials. Please run 'gcloud auth application-default login'")
-except Exception as e:
-    print(f"Error setting up Google Cloud credentials: {str(e)}")
-    print("Please make sure you have run 'gcloud auth application-default login' and have the necessary permissions.")
     sys.exit(1)
 
 class LLMError(Exception):
@@ -284,6 +256,37 @@ def get_llm_client(provider: str = "anthropic", model: Optional[str] = None) -> 
     if provider == "anthropic":
         return AnthropicLLM(anthropic.Anthropic(api_key=API_KEY))
     elif provider == "vertex_ai":
+        try:
+            from google.auth import default
+            from google.auth.transport.requests import Request
+            from google.oauth2.credentials import Credentials
+            from google.cloud import aiplatform
+        except ImportError:
+            print("Error: Google Cloud packages are not installed. Please run:")
+            print("pip install --upgrade google-auth google-auth-oauthlib google-auth-httplib2 google-cloud-aiplatform")
+            sys.exit(1)
+
+        # Set up Google Cloud credentials
+        credentials, project = default()
+        if not credentials.valid:
+            if credentials.expired and credentials.refresh_token:
+                credentials.refresh(Request())
+            else:
+                raise ValueError("Invalid Google Cloud credentials. Please run 'gcloud auth application-default login'")
+
+        # Set up Google Cloud credentials
+        try:
+            credentials, project = default()
+            if not credentials.valid:
+                if credentials.expired and credentials.refresh_token:
+                    credentials.refresh(Request())
+                else:
+                    raise ValueError("Invalid Google Cloud credentials. Please run 'gcloud auth application-default login'")
+        except Exception as e:
+            print(f"Error setting up Google Cloud credentials: {str(e)}")
+            print("Please make sure you have run 'gcloud auth application-default login' and have the necessary permissions.")
+            sys.exit(1)
+
         # Replace with your actual Google Cloud project ID and region
         #project_id = "devlm-435701"
         project_id = PROJECT_ID
@@ -300,7 +303,14 @@ llm_client = None
 # Initialize the Anthropic client
 # client = anthropic.Anthropic(api_key=API_KEY)
 
-TECHNICAL_BRIEF_FILE = "project_technical_brief.json"
+TECHNICAL_BRIEF_FILE = os.path.join(DEVLM_FOLDER, "project_technical_brief.json")
+TEST_PROGRESS_FILE = os.path.join(DEVLM_FOLDER, "test_progress.json")
+CHAT_FILE = os.path.join(DEVLM_FOLDER, "chat.txt")
+PROJECT_STRUCTURE_FILE = os.path.join(DEVLM_FOLDER, "project_structure.json")
+
+# Update the COMMAND_HISTORY_FILE and HISTORY_BRIEF_FILE
+COMMAND_HISTORY_FILE = os.path.join(DEVLM_FOLDER, f"command_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+HISTORY_BRIEF_FILE = os.path.join(DEVLM_FOLDER, f"history_brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
 
 def wait_until_midnight():
     now = datetime.now()
@@ -352,16 +362,13 @@ def retry_on_overload(max_retries=3, initial_delay=1, backoff_factor=2):
     return decorator
 
 def get_project_structure():
-    if os.path.exists("project_structure.json"):
-        with open("project_structure.json", "r") as f:
+    structure_file = os.path.join(DEVLM_FOLDER, "project_structure.json")
+    if os.path.exists(structure_file):
+        with open(structure_file, "r") as f:
             return json.load(f)
     else:
         return {
-            "golang": ["main.go", "api_gateway.go", "backend_service.go", "action_executor.go", "code_runner.go"],
-            "python": ["llm_service.py", "models.py", "utils.py"],
-            "docker": ["Dockerfile.golang", "Dockerfile.python"],
-            "config": ["github_config.yaml", "api_endpoints.json"],
-            "root": ["dev.txt", "README.md", "docker-compose.yml"]
+            "": []
         }
 
 def update_directory_summary(brief, directory_path):
@@ -781,12 +788,12 @@ def generate_project_structure(root_dir='.'):
     return create_structure(root_dir)
 
 def save_project_structure(structure):
-    with open('project_structure.json', 'w') as f:
+    with open(PROJECT_STRUCTURE_FILE, 'w') as f:
         json.dump(structure, f, indent=2)
 
 def read_project_structure():
-    if os.path.exists('project_structure.json'):
-        with open('project_structure.json', 'r') as f:
+    if os.path.exists(PROJECT_STRUCTURE_FILE):
+        with open(PROJECT_STRUCTURE_FILE, 'r') as f:
             return json.load(f)
     return None
 
@@ -848,8 +855,6 @@ def wait_for_user():
     print(f"Some error occurred. Please resolve the issue and press Enter to continue.")
     input()
     return True
-
-TEST_PROGRESS_FILE = "test_progress.json"
 
 def load_test_progress():
     if os.path.exists(TEST_PROGRESS_FILE):
@@ -1257,9 +1262,6 @@ def get_file_technical_brief(technical_brief, file_path):
     
     return result
 
-
-COMMAND_HISTORY_FILE = f"command_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-
 def save_command_history(command_history):
     with open(COMMAND_HISTORY_FILE, 'w') as f:
         json.dump(command_history, f, indent=2)
@@ -1582,13 +1584,12 @@ def update_project_structure(file_path):
         json.dump(project_structure, f, indent=2)
     
 unchanged_files = {}
-
-CHAT_FILE = "chat.txt"
 last_chat_content = ""
 chat_updated = False
 chat_updated_iteration = 0
 
 def ensure_chat_file_exists():
+    # Create the chat file if it doesn't exist
     if not os.path.exists(CHAT_FILE):
         with open(CHAT_FILE, 'w') as f:
             f.write("# Write your notes here. The script will pause after the current iteration when you save this file.\n")
@@ -1614,7 +1615,6 @@ def wait_for_user_input():
     last_chat_content = read_chat_file()
     chat_updated = False
 
-HISTORY_BRIEF_FILE = f"history_brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 MAX_BRIEF_COMMANDS = 20
 UPDATE_INTERVAL = 10
 
@@ -1637,7 +1637,7 @@ def update_history_brief(command_history: List[Dict], current_brief: Dict, user_
     recent_commands = command_history[-30:]  # Get the last MAX_BRIEF_COMMANDS commands
     
     update_prompt = f"""
-    You are software developer tasked with maintaining a concise history brief of a software development project. Since you are only provided the last 15 raw commands, you need to extract key events and summarize the project's progress based on the command history and the previous brief. This will help in tracking the project's development and identifying any issues or challenges and prevent repetition of the same mistakes and work. Be specific and concise in your output so that the project's progress can be easily tracked.
+    You are an assistant tasked with maintaining a concise history brief of a software development project. Since you are only provided the last 15 raw commands, you need to extract key events and summarize the project's progress based on the command history, user messages and the previous brief. This will help in tracking the project's development and identifying any issues or challenges and prevent repetition of the same mistakes and work. Be specific and concise in your output so that the project's progress can be easily tracked.
 
     Recent command history (last 30 commands):
     {json.dumps(recent_commands, indent=2)}
@@ -1649,6 +1649,7 @@ def update_history_brief(command_history: List[Dict], current_brief: Dict, user_
     Respond with a JSON object in the following format without any other text:
     {{
         "key_events": [
+            "User requested to add a new feature to the project.",
             "Issue X was resolved by modifying file Y.",
             "Feature A was implemented by adding a new function in file B.",
             "Issue Y was identified during testing in file Z and needs to be fixed.",
@@ -1658,7 +1659,7 @@ def update_history_brief(command_history: List[Dict], current_brief: Dict, user_
     """
     #print (update_prompt)
 
-    response = llm_client.generate_response(update_prompt, 2000)
+    response = llm_client.generate_response(update_prompt, 4000)
     print(f"History brief response: {response}")
     try:
         updated_brief = json.loads(response)
@@ -2060,7 +2061,7 @@ def generate_tree_structure(structure, prefix='', is_last=True):
     return output
 
 def get_tree_structure():
-    with open('project_structure.json', 'r') as f:
+    with open(PROJECT_STRUCTURE_FILE, 'r') as f:
         structure = json.load(f)
     
     tree = ['.'] + generate_tree_structure(structure)
@@ -2083,8 +2084,13 @@ def test_and_debug_mode(llm_client):
     # Register the signal handler
     signal.signal(signal.SIGTERM, handle_unexpected_termination)
 
-    with open('project_summary.md', 'r') as f:
-        project_summary = f.read()
+    try:
+        with open('project_summary.md', 'r') as f:
+            project_summary = f.read()
+    except FileNotFoundError:
+        print("Warning: project_summary.md file not found. This file is important for providing context to the LLM.")
+        print("For the current session, project summary to the LLM will be provided as 'No project summary found'")
+        project_summary = "No project summary found"
 
     technical_brief = load_technical_brief()
     directory_summaries = technical_brief.get("directory_summaries", {})
@@ -2232,7 +2238,7 @@ def test_and_debug_mode(llm_client):
         3. Run a raw command that requires approval, use: "RAW: <raw_command>". This will run the command in the shell and provide you with the output. You can use this for any command that is not in the allowed list.
         4. Check the output of a running process using "CHECK: <command>"
         5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..." and get the analysis of the files based on the reason and goals.
-        6. Modify one file (one of the files that being read only) (maximum: 4) and read four files by replying with "MULTI: <file_path1>, <file_path2>, <file_path3>, <file_path4>; MODIFY: <file_path(1,2,3,4)>" 
+        6. Modify one file (should be one of the files being read) (maximum: 4) and read four files by replying with "READ: <file_path1>, <file_path2>, <file_path3>, <file_path4>; MODIFY: <file_path(1,2,3,4)>" 
         7. Chat with the user for help or to give feedback by replying with "CHAT: <your question/feedback>". Do this when you see that no progress is being made.
         8. Restart a running process with "RESTART: <command>"
         9. Finish testing by replying with "DONE"
@@ -2249,14 +2255,14 @@ def test_and_debug_mode(llm_client):
 
         {"Administrator suggestions for this action: " + user_suggestion if HasUserInterrupted else ""}
 
-        {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
+        {"Previous action result/analysis/error: " + previous_action_analysis if previous_action_analysis else ""}
 
         Provide your response in the following format:
         ACTION: <your chosen action>
         GOAL: <Provide this goal as context for when you're executing the actual command (max 80 words>
         REASON: <Provide this as reason and context for when you're executing the actual command (max 80 words)>
 
-        What would you like to do next to progress towards user message? Once the user message is accomplished, use "CHAT" to ask for feedback, if they say, there is nothing else to do, use "DONE". Use Chain of Thought (CoT) in project context, past actions/chat and directives to decide the next action. Think why the chosen action is the correct one, that you've considered the directives and previous actions. CoT can be included in <CoT> tags.
+        What would you like to do next to complete the user's task? Once the user task is accomplished, use "CHAT" to ask for feedback, if they say, there is nothing else to do, use "DONE". Use Chain of Thought (CoT) in project context, past actions/chat and directives to decide the next action. Think why the chosen action is the correct one, that you've considered the directives and previous actions. CoT can be included in <CoT> tags.
         """
         # - Check element text (Use to debug contents of an element): "UI_CHECK_TEXT: <element_id>: <expected_text>"
         # if running_processes:
@@ -2347,6 +2353,8 @@ def test_and_debug_mode(llm_client):
 
                     inspection_prompt = f"""
                     {prompt}
+
+                    This is the action executor system for your action selection as appended before this text (only use the that as context and don't chose a action).
 
                     You chose to inspect the following files: {', '.join(inspect_files)}
 
@@ -2459,7 +2467,7 @@ def test_and_debug_mode(llm_client):
                 #         llm_client.switch_model("claude-3-opus@20240229")
                 #     continue
 
-            elif action.upper().startswith("MULTI:"):
+            elif action.upper().startswith("READ:"):
                 parts = action.split(";")
                 inspect_files = [f.strip() for f in parts[0].split(":")[1].split(",")]
                 write_file = parts[1].split(":")[1].strip()
@@ -2467,6 +2475,7 @@ def test_and_debug_mode(llm_client):
                 # Check if the file is in the unchanged_files list and still under constraint
                 if write_file in unchanged_files and unchanged_files[write_file] > 0:
                     error_msg = f"Error: The file {write_file} cannot be modified for {unchanged_files[write_file]} more iterations (this iteration won't count) due to no changes in the previous attempt. Use other actions such as INSPECT to increase the count."
+                    previous_action_analysis = error_msg
                     command_entry["error"] = error_msg
                     print(error_msg)
                     command_history.append(command_entry)
@@ -2476,6 +2485,7 @@ def test_and_debug_mode(llm_client):
 
                 if write_file not in inspect_files:
                     error_msg = f"Error: The file to be written ({write_file}) must be one of the inspected files."
+                    previous_action_analysis = error_msg
                     # Check if error field is already present in the command entry, then concat less set
                     if "error" not in command_entry:
                         command_entry["error"] = error_msg
@@ -2516,7 +2526,8 @@ def test_and_debug_mode(llm_client):
                         update_project_structure(write_file)
                         print(f"Updated project structure with new file: {write_file}")
                     else:
-                        error_msg = f"User denied creation of new file: {write_file}. You should work with existing files only."
+                        error_msg = f"File did not exist. User denied creation of new file: {write_file}. You should work with existing files only."
+                        previous_action_analysis = error_msg
                         command_entry["error"] = error_msg
                         print(error_msg)
                         command_history.append(command_entry)
@@ -2525,9 +2536,11 @@ def test_and_debug_mode(llm_client):
                         continue
 
                 inspection_prompt = f"""
+                <PREVIOUS_PROMPT>
                 {prompt}
+                </PREVIOUS_PROMPT>
 
-                You are a professional software architect and developer.
+                This is the action executor system for your action selection as appended before this text (only use the that as context and don't chose a action).
 
                 You chose to inspect multiple files and modify one of them.
 
@@ -2538,7 +2551,10 @@ def test_and_debug_mode(llm_client):
                     inspection_prompt += f"""
                 File: {file_path}
                 Content:
+
+                <FILE_CONTENT>
                 {content}
+                </FILE_CONTENT>
 
                 """
 
@@ -2661,7 +2677,9 @@ def test_and_debug_mode(llm_client):
                 print(f"\nChecking: {action}")
                 output, success = execute_command(action)
                 analysis_prompt = f"""
+                <PREVIOUS_PROMPT>
                 {prompt}
+                </PREVIOUS_PROMPT>
 
                 You requested to check this command: {action}.
 
@@ -2700,7 +2718,9 @@ def test_and_debug_mode(llm_client):
                             command_entry["suggestion"] = output
                         else:                      
                             analysis_prompt = f"""
+                            <PREVIOUS_PROMPT>
                             {prompt}
+                            </PREVIOUS_PROMPT>
 
                             You requested to run this command: {action}.
 
@@ -3005,7 +3025,7 @@ def load_env_variables():
         exit(1)
 
 def main():
-    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION
+    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, llm_client
 
     parser = argparse.ArgumentParser(description="DevLM Bootstrap script")
     parser.add_argument("--frontend", action="store_true", help="Enable frontend testing")
@@ -3038,6 +3058,11 @@ def main():
         "--region",
         help="Specify the Google Cloud region (only used if source is 'gcloud')"
     )
+    parser.add_argument(
+        "--project-path",
+        default=".",
+        help="Specify the path to the project directory (default: current directory)"
+    )
     args = parser.parse_args()
 
     MODEL = args.model
@@ -3045,6 +3070,7 @@ def main():
     API_KEY = args.api_key
     PROJECT_ID = args.project_id
     REGION = args.region
+    PROJECT_PATH = args.project_path
 
     frontend_testing_enabled = args.frontend
 
@@ -3070,6 +3096,13 @@ def main():
         print(f"Error: Invalid SOURCE '{SOURCE}' for MODEL 'claude'. Must be 'gcloud' or 'anthropic'.")
         exit(1)
 
+    # Change the working directory to the project path
+    os.chdir(PROJECT_PATH)
+    print(f"Working directory set to: {PROJECT_PATH}")
+
+    # Ensure the devlm folder exists
+    os.makedirs(DEVLM_FOLDER, exist_ok=True)
+
     if frontend_testing_enabled:
         ensure_chrome_is_running()
         if not connect_to_chrome():
@@ -3081,17 +3114,10 @@ def main():
     # Ensure chat file exists before entering any mode
     ensure_chat_file_exists()
 
-        # Check if project_structure.json exists
-    project_structure = read_project_structure()
-    if project_structure is None:
-        user_input = input("project_structure.json not found. Do you want to generate it? (yes/no): ").lower()
-        if user_input == 'yes':
-            project_structure = generate_project_structure()
-            save_project_structure(project_structure)
-            print("project_structure.json has been generated.")
-        else:
-            print("Please create a project_structure.json file manually before proceeding.")
-            return
+    # Generate project structure since files may have been deleted, added, or renamed
+    project_structure = generate_project_structure()
+    save_project_structure(project_structure)
+    print("Project directory structure has been generated.")
 
     if args.mode:
         mode = args.mode
@@ -3105,6 +3131,7 @@ def main():
     else:
         print("Invalid mode. Please choose 'generate' or 'test'.")
         return
+    
     
 if __name__ == "__main__":
     try:
