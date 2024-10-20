@@ -2843,12 +2843,24 @@ def update_file_entry(directories, file_path, file_entry):
         current_dir["files"].append(file_entry)
 
 def generate():
-    with open('project_summary.md', 'r') as f:
-        project_summary = f.read()
+
+    def handle_interrupt(signum, frame):
+        print("\nCtrl+C received. Exiting the program.")
+        sys.exit(0)
+
+    # Set up the signal handler
+    signal.signal(signal.SIGINT, handle_interrupt)
+
+    try:
+        with open('project_summary.md', 'r') as f:
+            project_summary = f.read()
+    except FileNotFoundError:
+        print("Error: project_summary.md file not found. Please create this file as it is required to generate/update the project directory structure.")
+        return
 
     current_structure = get_project_structure()
 
-    user_input = input("Do you want to review and potentially update the project structure? (yes/no): ").lower()
+    user_input = input("\nDo you want to generate/update the project directory structure? (yes/no) [default: no]: ").lower()
     if user_input == 'yes':
         suggested_structure, explanation = review_project_structure(project_summary)
 
@@ -2858,7 +2870,7 @@ def generate():
             print("\nExplanation:")
             print(explanation)
             
-            user_input = input("Do you want to apply the suggested structure? (yes/no): ").lower()
+            user_input = input("\nDo you want to apply the suggested structure? Warning: This will overwrite the current structure deleting all files and directories in the project directory (yes/no) [default: no]: ").lower()
             if user_input == 'yes':
                 # Backup the current structure
                 if os.path.exists("project_structure.json"):
@@ -2901,11 +2913,27 @@ def generate():
     # List of files to preserve and not regenerate
     preserve_files = ["bootstrap.py", "project_summary.md", "project_structure.json"]
 
+    # Ask the user if they want to generate code/content for the files (default is no)
+    user_input = input("\nDo you want to generate code/content for the files? [NOT RECOMMENDED as it is unreliable, use test mode instead to develop code/content for the project] (yes/no) [default: no]: ").lower()
+    if user_input == '' or user_input == 'no':
+        generate_code = False
+    else:
+        generate_code = True
+    
+    if generate_code:
+        print("Generating code/content for the files...")
+    else:
+        print("Skipping code/content generation. Restarts DevLM in test mode using --mode test.")
+        exit()
+
     while not all_done and current_iteration < max_iterations:
         current_iteration += 1
         print(f"Starting iteration {current_iteration}")
 
         all_done = True
+        # Generate project structure since files may have been deleted, added, or renamed
+        project_structure = generate_project_structure()
+        save_project_structure(project_structure)
 
         structure = get_project_structure()
         files_to_process = []
@@ -2920,7 +2948,7 @@ def generate():
                     files.extend(collect_file_paths(items, new_path))
                 return files
             return []
-
+    
         files_to_process = collect_file_paths(structure)
 
         for file_path in files_to_process:
