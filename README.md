@@ -137,7 +137,19 @@ The LLM uses this context to:
 ```bash
 git clone https://github.com/nero7991/devlm.git
 cd devlm
-pip install -r requirements.txt
+```
+
+You can either create a virtual environment or install the dependencies in your current environment.
+For virtual environment, use the following command:
+```bash
+python3 -m venv devlm-env
+source devlm-env/bin/activate
+pip3 install -r requirements.txt
+```
+
+Or install the dependencies in your current environment:
+```bash
+pip3 install -r requirements.txt
 ```
 
 2. Create a `project_summary.md` in your project's root directory describing the project's goals and requirements.
@@ -147,9 +159,188 @@ pip install -r requirements.txt
 python3 bootstrap.py --mode [generate|test] --source [gcloud|anthropic] --project-path /path/to/your/project
 ```
 
-Example:
-```bash
-python3 bootstrap.py --mode test --source gcloud --project-path ~/GitHub/myproject/
+There are two modes:
+- `generate`: The LLM will generate a project directory structure based on the project summary and create empty files. Originally, plan was to generate the initial code in generate mode as well but it was too unreliable. Test mode does that much better.
+- `test`: Develop, test and debug mode. Chat with the LLM to develop your project.
+
+### Example of develop, test and debug mode:
+```
+(myenv) orencollaco@Oren-Dell-Ubuntu:~/GitHub/devlm$ python3 bootstrap.py --mode test --source gcloud  --project-path ~/GitHub/devlm/devlm-identity/
+Using Claude via Google Cloud. Project ID: devlm-434202, Region: us-east5
+Working directory set to: /home/orencollaco/GitHub/devlm/devlm-identity/
+Project directory structure has been generated.
+Created new command history file: .devlm/command_history_20241019_232712.json
+Warning: project_summary.md file not found. This file is important for providing context to the LLM.
+For the current session, project summary to the LLM will be provided as 'No project summary found'
+Entering test and debug mode...
+History brief: {}
+What would you like to accomplish in this session? Test the /registration endpoint using CURL by creating a user and then exit using DONE action
+Running processes for debug: []
+Process outputs for debug: []
+
+Generating next step (Iteration 1)...
+Response usage: Usage(input_tokens=1559, output_tokens=150)
+LLM response:
+<CoT>
+To test the /registration endpoint using CURL, we need to:
+1. Ensure the API server is running
+2. Craft a CURL command to send a POST request to the /registration endpoint
+3. Execute the CURL command and analyze the response
+
+First, let's check if the API server is running. If not, we'll need to start it.
+</CoT>
+
+ACTION: INDEF: go run cmd/api/main.go
+GOAL: Start the API server to test the /registration endpoint
+REASON: We need a running server to test the endpoint. Starting it in the background allows us to interact with it using CURL.
+
+Executing command: INDEF: go run cmd/api/main.go
+Process Info: {'cmd': 'go run cmd/api/main.go', 'process': <Popen: returncode: None args: ['go', 'run', 'cmd/api/main.go']>, 'queue': <queue.Queue object at 0x78959f5853f0>, 'cwd': '/home/orencollaco/GitHub/devlm/devlm-identity', 'run_command': 'go run cmd/api/main.go', 'pid': 54444, 'child_pids': [54590]}
+Command output:
+Started new process: go run cmd/api/main.go
+Initial PID: 54444
+Child PIDs: [54590]
+Initial output:
+ly
+PostgresDB: 2024/10/19 23:27:59 postgres.go:535: Database schema check passed successfully
+devlm-identity: 2024/10/19 23:27:59 main.go:56: Database schema check passed
+devlm-identity: 2024/10/19 23:27:59 main.go:116: Debug - Registered routes:
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/register [POST]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/login [POST]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/forgot-password [POST]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/reset-password [POST]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/refresh-token [POST]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/profile [GET]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/change-password [POST]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users [GET]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/{id} [GET]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/{id} [PUT]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/{id} [DELETE]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/{id}/update-role [PATCH]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/users/{id}/role [GET]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/auth/assign-role [POST]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/auth/ssh-keys [GET]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/auth/ssh-keys [POST]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: /api/v1/auth/ssh-keys/{id} [DELETE]
+devlm-identity: 2024/10/19 23:27:59 main.go:120: Debug - Route: / []
+devlm-identity: 2024/10/19 23:27:59 main.go:133: Starting server on :8080
+
+Running processes for debug: ['go run cmd/api/main.go']
+Process outputs for debug: []
+.
+.
+.
+Generating next step (Iteration 7)...
+Response usage: Usage(input_tokens=11329, output_tokens=288)
+LLM response:
+<CoT>
+Given that we've successfully registered a new user, the next logical step is to test the login functionality with the newly created user credentials. This will ensure that the registration process was complete and that the user can access the system. We should use the curl command to send a POST request to the login endpoint with the credentials we just created.
+
+I've considered the following:
+1. We've completed the registration process successfully.
+2. The next step in user authentication flow is typically login.
+3. Testing the login will verify that the user was properly created and stored in the database.
+4. This action aligns with the directive to test related functionalities after a successful operation.
+5. We haven't tested the login functionality yet, so this is a new and necessary step.
+</CoT>
+
+ACTION: RUN: curl -X POST -H "Content-Type: application/json" -d '{"username":"uniqueuser","password":"Password123!"}' http://localhost:8080/api/v1/users/login
+
+GOAL: Verify that the newly registered user can successfully log in to the system.
+
+REASON: After successfully registering a new user, it's crucial to test the login functionality to ensure the user was properly created and can access the system. This step validates the entire registration and authentication process.
+Checking environment...
+Current directory: /home/orencollaco/GitHub/devlm/devlm-identity
+Curl version: Command: curl --version
+STDOUT:
+curl 7.81.0 (x86_64-pc-linux-gnu) libcurl/7.81.0 OpenSSL/3.0.2 zlib/1.2.11 brotli/1.0.9 zstd/1.4.8 libidn2/2.3.2 libpsl/0.21.0 (+libidn2/2.3.2) libssh/0.9.6/openssl/zlib nghttp2/1.43.0 librtmp/2.3 OpenLDAP/2.5.18
+Release-Date: 2022-01-05
+Protocols: dict file ftp ftps gopher gophers http https imap imaps ldap ldaps mqtt pop3 pop3s rtmp rtsp scp sftp smb smbs smtp smtps telnet tftp 
+Features: alt-svc AsynchDNS brotli GSS-API HSTS HTTP2 HTTPS-proxy IDN IPv6 Kerberos Largefile libz NTLM NTLM_WB PSL SPNEGO SSL TLS-SRP UnixSockets zstd
+
+STDERR:
+
+Executing command: curl -X POST -H "Content-Type: application/json" -d '{"username":"uniqueuser","password":"Password123!"}' http://localhost:8080/api/v1/users/login
+Command output:
+Command: curl -X POST -H "Content-Type: application/json" -d '{"username":"uniqueuser","password":"Password123!"}' http://localhost:8080/api/v1/users/login
+STDOUT:
+{"refresh_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MzAwMDY5MzUsInVzZXJfaWQiOiI4Yjk3YzBkMS0wMTU5LTQ5MzctYTIyMy0yZDJjNjE0NTVlMDYifQ.9qTIv4k6EuOb3u6Y4vcitfL8KpyYlPAImhd8ixOfpUQ","token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Mjk0ODg1MzUsInJvbGUiOiJ1c2VyIiwidXNlcl9pZCI6IjhiOTdjMGQxLTAxNTktNDkzNy1hMjIzLTJkMmM2MTQ1NWUwNiIsInVzZXJuYW1lIjoidW5pcXVldXNlciJ9.a2xC0LJt4V-GK6Y9ZwyXPR59vCexxAPNuit7zvxd2wk"}
+
+STDERR:
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+100   475  100   424  100    51   8034    966 --:--:-- --:--:-- --:--:--  9134
+Response usage: Usage(input_tokens=12096, output_tokens=189)
+Command analysis:
+The login attempt for the newly created user "uniqueuser" was successful. The server responded with a JSON object containing two tokens:
+
+1. A refresh token for obtaining new access tokens.
+2. An access token (labeled as "token") for authenticating API requests.
+
+The presence of these tokens indicates that the user's credentials were validated correctly, and the authentication system is working as expected. The access token includes claims for the user's role ("user"), user ID, and username, which is standard for JWT-based authentication systems.
+
+Next steps:
+1. Test protected endpoints using the access token to ensure proper authorization.
+2. Verify token expiration and refresh functionality.
+3. Test invalid login attempts to confirm proper error handling.
+4. Consider implementing additional security measures like rate limiting for login attempts.
+
+No debugging steps are necessary as the login process completed successfully without any errors.
+Running processes for debug: ['go run cmd/api/main.go']
+Process outputs for debug: ['Latest output from \'go run cmd/api/main.go\':\n2024/10/19 23:28:55 BodyParserMiddleware: Entering for request: POST /api/v1/users/login\n2024/10/19 23:28:55 BodyParserMiddleware: Raw request body: {"username":"uniqueuser","password":"Password123!"}\n2024/10/19 23:28:55 BodyParserMiddleware: Parsed JSON body: map[password:Password123! username:uniqueuser]\n2024/10/19 23:28:55 BodyParserMiddleware: Context values after processing: context.Background.WithValue(type *http.contextKey, val <not Stringer>).WithValue(type *http.contextKey, val 127.0.0.1:8080).WithCancel.WithCancel.WithValue(type mux.contextKey, val <not Stringer>).WithValue(type mux.contextKey, val <not Stringer>).WithValue(type string, val <not Stringer>).WithValue(type string, val <not Stringer>)\ndevlm-identity: 2024/10/19 23:28:55 main.go:66: Debug - Request: POST /api/v1/users/login\ndevlm-identity: 2024/10/19 23:28:55 main.go:67: Debug - Headers: map[Accept:[*/*] Content-Length:[51] Content-Type:[application/json] User-Agent:[curl/7.81.0]]\ndevlm-identity: 2024/10/19 23:28:55 main.go:70: Debug - Raw request body: {"username":"uniqueuser","password":"Password123!"}\ndevlm-identity: 2024/10/19 23:28:55 auth.go:135: Raw request body: {"username":"uniqueuser","password":"Password123!"}\n2024/10/19 23:28:55 Started POST /api/v1/users/login\n2024/10/19 23:28:55 Request Headers: map[Accept:[*/*] Content-Length:[51] Content-Type:[application/json] User-Agent:[curl/7.81.0]]\n2024/10/19 23:28:55 Request Body: {"username":"uniqueuser","password":"Password123!"}\ndevlm-identity: 2024/10/19 23:28:55 auth.go:149: Login attempt for username: uniqueuser or email: \ndevlm-identity: 2024/10/19 23:28:55 user.go:298: Getting user by username: uniqueuser\nPostgresDB: 2024/10/19 23:28:55 postgres.go:244: Retrieved user by username: ID=8b97c0d1-0159-4937-a223-2d2c61455e06, Username=uniqueuser\ndevlm-identity: 2024/10/19 23:28:55 user.go:304: Retrieved user by username: ID=8b97c0d1-0159-4937-a223-2d2c61455e06, Username=uniqueuser, Role=user\ndevlm-identity: 2024/10/19 23:28:55 auth.go:181: Verifying password for user: uniqueuser\ndevlm-identity: 2024/10/19 23:28:55 auth.go:202: Login successful for user: uniqueuser, Role: user\n2024/10/19 23:28:55 Completed POST /api/v1/users/login in 52.176401ms with status 200\n2024/10/19 23:28:55 Response Headers: map[Content-Type:[application/json]]\n2024/10/19 23:28:55 Response Body: {"refresh_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MzAwMDY5MzUsInVzZXJfaWQiOiI4Yjk3YzBkMS0wMTU5LTQ5MzctYTIyMy0yZDJjNjE0NTVlMDYifQ.9qTIv4k6EuOb3u6Y4vcitfL8KpyYlPAImhd8ixOfpUQ","token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Mjk0ODg1MzUsInJvbGUiOiJ1c2VyIiwidXNlcl9pZCI6IjhiOTdjMGQxLTAxNTktNDkzNy1hMjIzLTJkMmM2MTQ1NWUwNiIsInVzZXJuYW1lIjoidW5pcXVldXNlciJ9.a2xC0LJt4V-GK6Y9ZwyXPR59vCexxAPNuit7zvxd2wk"}\n2024/10/19 23:28:55 BodyParserMiddleware: Exiting for request: POST /api/v1/users/login\n']
+
+Generating next step (Iteration 8)...
+Response usage: Usage(input_tokens=13614, output_tokens=255)
+LLM response:
+<CoT>
+Given that we have successfully registered a new user and logged in with their credentials, we have completed the main tasks requested by the user. The registration and login processes are working as expected. The next logical step would be to test a protected endpoint to ensure that the authentication system is fully functional. However, we don't have specific information about protected endpoints in this project.
+
+Since we've accomplished the primary goals, it's appropriate to check with the user if there are any additional tasks or if they're satisfied with the current results. If they have no further requests, we can conclude the testing session.
+</CoT>
+
+ACTION: CHAT: We've successfully tested user registration and login. The system is working as expected. Are there any specific protected endpoints you'd like me to test using the authentication token we received, or is there anything else you'd like me to verify or test?
+
+GOAL: Confirm with the user if there are any additional tasks or if the current testing is sufficient.
+
+REASON: We've completed the main tasks of testing registration and login. It's important to check with the user for any additional requirements or to confirm if the current testing meets their needs before concluding the session.
+
+Asking for help with the question: We've successfully tested user registration and login. The system is working as expected. Are there any specific protected endpoints you'd like me to test using the authentication token we received, or is there anything else you'd like me to verify or test?
+Please provide your response to the model's question: We're done  
+Response usage: Usage(input_tokens=12583, output_tokens=179)
+History brief response: {
+    "key_events": [
+        "User requested to test the /registration endpoint using CURL.",
+        "Initial attempt to register a user failed due to existing username.",
+        "Second attempt to register a user failed due to existing email.",
+        "Third attempt to register a user failed due to password complexity requirements (missing uppercase letter).",
+        "Fourth attempt to register a user failed due to password complexity requirements (missing special character).",
+        "User registration was successful with a password meeting all requirements.",
+        "Login functionality was tested successfully with the newly created user.",
+        "Authentication tokens (access token and refresh token) were received upon successful login.",
+        "Testing of registration and login functionalities completed successfully.",
+        "User confirmed that testing was complete and no further actions were required."
+    ]
+}
+Updated history brief.
+Running processes for debug: ['go run cmd/api/main.go']
+Process outputs for debug: []
+
+Generating next step (Iteration 9)...
+Response usage: Usage(input_tokens=13973, output_tokens=146)
+LLM response:
+<CoT>
+The user has indicated that we're done with the testing process. We've successfully tested the registration and login functionalities, and the user hasn't requested any further testing or verification. Given this information and following the directives, particularly directive 7 about not repeating actions unnecessarily, the most appropriate next step is to conclude the testing session.
+</CoT>
+
+ACTION: DONE
+GOAL: Conclude the testing session as requested by the user.
+REASON: The user has confirmed that we're done with the testing process. We've successfully completed the main tasks of testing registration and login, and the user hasn't requested any additional tests or verifications.
+
+Test and debug mode completed.
+Terminated process group: go run cmd/api/main.go
+(myenv) orencollaco@Oren-Dell-Ubuntu:~/GitHub/devlm$ 
 ```
 
 ## File Organization
