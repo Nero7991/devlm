@@ -163,6 +163,7 @@ Arguments:
 8. --region: Optional. Specifies the Google Cloud region, by default it will use the region in the `devlm.env` file (only used if source is 'gcloud').
 
 ```
+5. DevLM will take over and do things. If it's going in the wrong direction, you can stop it by pressing Ctrl+C and then you can give it feedback on what went wrong and what to do next.
 
 There are two modes:
 - `generate`: The LLM will generate a project directory structure based on the project summary and create empty files. Originally, plan was to generate the initial code in generate mode as well but it was too unreliable. Test mode does that much better.
