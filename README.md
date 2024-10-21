@@ -163,7 +163,7 @@ There are two modes:
 - `generate`: The LLM will generate a project directory structure based on the project summary and create empty files. Originally, plan was to generate the initial code in generate mode as well but it was too unreliable. Test mode does that much better.
 - `test`: Develop, test and debug mode. Chat with the LLM to develop your project.
 
-### Example of develop, test and debug mode:
+### Example of develop, test and debug mode (--mode test) in action:
 ```
 (myenv) orencollaco@Oren-Dell-Ubuntu:~/GitHub/devlm$ python3 bootstrap.py --mode test --source gcloud  --project-path ~/GitHub/devlm/devlm-identity/
 Using Claude via Google Cloud. Project ID: devlm-434202, Region: us-east5
@@ -343,6 +343,148 @@ Terminated process group: go run cmd/api/main.go
 (myenv) orencollaco@Oren-Dell-Ubuntu:~/GitHub/devlm$ 
 ```
 
+### Example of generate mode (--mode generate) in action:
+```
+(myenv) orencollaco@Oren-Dell-Ubuntu:~/GitHub/devlm$ python3 bootstrap.py --mode generate --source gcloud --project-id "devlm-434202" --region "us-east5" --project-path ~/GitHub/devlm/devlm-ml/
+Using Claude via Google Cloud. Project ID: devlm-434202, Region: us-east5
+Working directory set to: /home/orencollaco/GitHub/devlm/devlm-ml/
+Created .devlm/chat.txt. You can write notes in this file to communicate with the LLM.
+Project directory structure has been generated.
+
+Do you want to generate/update the project directory structure? (yes/no) [default: no]: yes
+Response usage: Usage(input_tokens=1085, output_tokens=754)
+Suggested project structure:
+{
+  "": [
+    "README.md",
+    "go.mod",
+    "go.sum",
+    "Makefile",
+    "Dockerfile",
+    ".gitignore",
+    ".env.example"
+  ],
+  "cmd": {
+    "api": [
+      "main.go"
+    ]
+  },
+  "internal": {
+    "api": [
+      "router.go",
+      "handlers.go"
+    ],
+    "codegeneration": [
+      "generator.go"
+    ],
+    "llm": [
+      "client.go",
+      "anthropic.go",
+      "vertexai.go"
+    ],
+    "projectrefinement": [
+      "refiner.go"
+    ],
+    "config": [
+      "config.go"
+    ]
+  },
+  "pkg": {
+    "models": [
+      "code_generation.go",
+      "project.go"
+    ],
+    "middleware": [
+      "ml_middleware.go"
+    ],
+    "database": [
+      "postgres.go"
+    ]
+  },
+  "api": [
+    "openapi.yaml"
+  ],
+  "config": [
+    "config.yaml"
+  ],
+  "deployments": {
+    "kubernetes": [
+      "service.yaml",
+      "deployment.yaml"
+    ]
+  },
+  "scripts": [
+    "setup.sh",
+    "test.sh"
+  ],
+  "docs": [
+    "architecture.md",
+    "api.md"
+  ],
+  "test": {
+    "integration": [
+      "integration_test.go"
+    ],
+    "unit": [
+      "unit_test.go"
+    ]
+  }
+}
+
+Explanation:
+```
+
+Explanation of changes and additions:
+
+1. Root directory:
+   - Added essential files like README.md, go.mod, go.sum, Makefile, Dockerfile, .gitignore, and .env.example.
+
+2. cmd/api:
+   - Kept main.go as the entry point for the service.
+
+3. internal directory:
+   - Created an api package with router.go and handlers.go to separate routing and handler logic.
+   - Renamed llm_client.go to client.go and added separate files for Anthropic and Vertex AI implementations.
+   - Added a config package with config.go for centralized configuration management.
+
+4. pkg directory:
+   - Kept the existing structure for models, middleware, and database.
+
+5. api directory:
+   - Moved openapi.yaml here for better organization of API-related files.
+
+6. config directory:
+   - Kept config.yaml for service configuration.
+
+7. deployments directory:
+   - Created a kubernetes subdirectory for Kubernetes deployment files.
+
+8. scripts directory:
+   - Added setup.sh and test.sh for common development and testing tasks.
+
+9. docs directory:
+   - Added architecture.md and api.md for detailed documentation.
+
+10. test directory:
+    - Created separate directories for integration and unit tests.
+
+This structure improves upon the original by:
+- Following Go project layout conventions more closely.
+- Separating concerns more effectively (e.g., API handlers, router, and LLM client implementations).
+- Adding necessary configuration and documentation files.
+- Including directories for tests, scripts, and deployment configurations.
+- Providing a clearer separation between internal and public (pkg) packages.
+
+This structure should enhance maintainability, scalability, and adherence to best practices for Go projects.
+
+Do you want to apply the suggested structure? Warning: This will overwrite the current structure deleting all files and directories in the project directory (yes/no) [default: no]: yes
+Technical brief saved to .devlm/project_technical_brief.json
+
+Do you want to generate code/content for the files? [NOT RECOMMENDED as it is unreliable, use test mode instead to develop code/content for the project] (yes/no) [default: no]: 
+Skipping code/content generation. Restarts DevLM in test mode using --mode test.
+(myenv) orencollaco@Oren-Dell-Ubuntu:~/GitHub/devlm$ 
+```
+
 ## File Organization
 
 - `.devlm/` - Created in your project directory, contains:
@@ -360,12 +502,12 @@ Terminated process group: go run cmd/api/main.go
 
 ## Optional Arguments
 
-- `--frontend`: Enable UI testing
+- `--frontend`: Enable UI testing actions
 - `--api-key`: Anthropic API key (if using anthropic source)
 - `--project-id`: Google Cloud project ID (if using gcloud source)
 - `--region`: Google Cloud region (if using gcloud source)
 
-## Known Limitations
+## Known Limitations (this will improve as model improves and needle in a haystack retrival gets better)
 
 - May produce inconsistent or incorrect code
 - Limited understanding of complex project structures
@@ -375,12 +517,8 @@ Terminated process group: go run cmd/api/main.go
 
 ## Contributing
 
-As this project is in its early stages, we're primarily focusing on stabilizing core functionality. However, feedback and issue reports are welcome.
+As this project is in its early stages, we're primary focus on getting the vision and core functionality right. Feedback and issue reports are most welcome.
 
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
-## Disclaimer
-
-DevLM is an experimental tool and should not be used for critical or production projects at this stage. Use at your own risk.

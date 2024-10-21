@@ -2923,7 +2923,7 @@ def generate():
     if generate_code:
         print("Generating code/content for the files...")
     else:
-        print("Skipping code/content generation. Restarts DevLM in test mode using --mode test.")
+        print("Skipping code/content generation. Restart DevLM in test mode using --mode test.")
         exit()
 
     while not all_done and current_iteration < max_iterations:
