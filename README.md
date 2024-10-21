@@ -1,9 +1,12 @@
 # DevLM - Software Development with LLMs
 ### Oren's crude attempt at somewhat fully automating software development, testing and integration in his personal projects
 
+Demo video of DevLM modifying and testing the /api/v1/users/register endpoint to /new in [devlm-identity service](https://github.com/Nero7991/devlm-identity) which was fully developed by Claude using DevLM: https://www.youtube.com/watch?v=_xGed1biVoM
+
 ## Major Issues
 
-- Dealbreaker: The needle in the haystack problem causes loops and repeated actions when a task has many steps. (Only tested with Claude Sonnet 3.5)
+- The needle in the haystack problem causes loops and repeated actions when a task has many steps. (Only tested with Claude Sonnet 3.5)
+- Claude Sonnet 3.5 is unnecessarly verbose. Need a more concise model.
 
 ## Vision and background
 
