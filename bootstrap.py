@@ -94,7 +94,7 @@ class AnthropicLLM(LLMInterface):
         while True:
             try:
                 response = self.client.messages.create(
-                    model="claude-3-5-sonnet-20240620",
+                    model="claude-3-5-sonnet-20241022",
                     max_tokens=max_tokens,
                     messages=[
                         {"role": "user", "content": prompt}
@@ -184,7 +184,7 @@ class VertexAILLM(LLMInterface):
         self.client = AnthropicVertex(region=region, project_id=project_id)
         self.max_retries = 5
         self.retry_delay = 32  # Start with 32 seconds delay
-        self.model = model or "claude-3-5-sonnet@20240620"  # Default model
+        self.model = model or "claude-3-5-sonnet-v2@20241022"  # Default model
 
     def generate_response(self, prompt: str, max_tokens: int) -> str:
         messages = [{"role": "user", "content": prompt}]
@@ -307,6 +307,7 @@ TECHNICAL_BRIEF_FILE = os.path.join(DEVLM_FOLDER, "project_technical_brief.json"
 TEST_PROGRESS_FILE = os.path.join(DEVLM_FOLDER, "test_progress.json")
 CHAT_FILE = os.path.join(DEVLM_FOLDER, "chat.txt")
 PROJECT_STRUCTURE_FILE = os.path.join(DEVLM_FOLDER, "project_structure.json")
+TASK = None
 
 # Update the COMMAND_HISTORY_FILE and HISTORY_BRIEF_FILE
 COMMAND_HISTORY_FILE = os.path.join(DEVLM_FOLDER, f"command_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
@@ -1135,48 +1136,77 @@ def execute_command(command, timeout=600):
         return execute_command_with_timeout(command, timeout)
 
 def execute_command_with_timeout(command, timeout):
-    # Split the command into parts
-    command_parts = command.split('&&')
-    
-    # Initialize variables
+    ## Split the command into parts
+    #command_parts = command.split('&&')
+    #
+    ## Initialize variables
+    #current_dir = os.getcwd()
+    #output = ""
+    #return_code = 0
+    #
+    #try:
+    #    for part in command_parts:
+    #        part = part.strip()
+    #        if part.startswith('cd '):
+    #            # Change directory
+    #            new_dir = part.split(None, 1)[1]
+    #            try:
+    #                os.chdir(new_dir)
+    #                output += f"Changed directory to {new_dir}\n"
+    #            except FileNotFoundError:
+    #                output += f"Error: Directory '{new_dir}' not found\n"
+    #                return_code = 1
+    #                break
+    #        else:
+    #            # Execute the command
+    #            try:
+    #                process = subprocess.Popen(shlex.split(part), stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True)
+    #                stdout, stderr = process.communicate(timeout=timeout)
+    #                return_code = process.returncode
+    #                output += f"Command: {part}\n"
+    #                output += f"STDOUT:\n{stdout}\n"
+    #                output += f"STDERR:\n{stderr}\n"
+    #                if return_code != 0:
+    #                    output += f"Command failed with return code {return_code}\n"
+    #                    break
+    #            except subprocess.TimeoutExpired:
+    #                process.kill()
+    #                output += f"Command execution timed out after {timeout} seconds.\n"
+    #                return_code = -1
+    #                break
+    #            except FileNotFoundError:
+    #                output += f"Error: Command '{part.split()[0]}' not found\n"
+    #                return_code = 1
+    #                break
     current_dir = os.getcwd()
     output = ""
     return_code = 0
 
     try:
-        for part in command_parts:
-            part = part.strip()
-            if part.startswith('cd '):
-                # Change directory
-                new_dir = part.split(None, 1)[1]
-                try:
-                    os.chdir(new_dir)
-                    output += f"Changed directory to {new_dir}\n"
-                except FileNotFoundError:
-                    output += f"Error: Directory '{new_dir}' not found\n"
-                    return_code = 1
-                    break
-            else:
-                # Execute the command
-                try:
-                    process = subprocess.Popen(shlex.split(part), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-                    stdout, stderr = process.communicate(timeout=timeout)
-                    return_code = process.returncode
-                    output += f"Command: {part}\n"
-                    output += f"STDOUT:\n{stdout}\n"
-                    output += f"STDERR:\n{stderr}\n"
-                    if return_code != 0:
-                        output += f"Command failed with return code {return_code}\n"
-                        break
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    output += f"Command execution timed out after {timeout} seconds.\n"
-                    return_code = -1
-                    break
-                except FileNotFoundError:
-                    output += f"Error: Command '{part.split()[0]}' not found\n"
-                    return_code = 1
-                    break
+        # Execute the entire command as a single shell command
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True, executable='/bin/bash')
+        
+        def timeout_handler(signum, frame):
+            process.kill()
+            raise subprocess.TimeoutExpired(command, timeout)
+
+        # Set up the timeout
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout)
+
+        try:
+            stdout, stderr = process.communicate()
+            return_code = process.returncode
+            output += f"Command: {command}\n"
+            output += f"STDOUT:\n{stdout}\n"
+            output += f"STDERR:\n{stderr}\n"
+            if return_code != 0:
+                output += f"Command failed with return code {return_code}\n"
+        except subprocess.TimeoutExpired:
+            output += f"Command execution timed out after {timeout} seconds.\n"
+            return_code = -1
+        finally:
+            signal.alarm(0)  # Cancel the alarm
     finally:
         # Always change back to the original directory
         os.chdir(current_dir)
@@ -1540,15 +1570,15 @@ def compare_and_write(file_path, new_content):
                     f.write(new_content)
                 print(f"Changes made to {file_path}:")
                 print(''.join(diff))
-                return True
+                return True, diff
             else:
                 print(f"No actual changes to write in {file_path}")
-                return False
+                return False, None
         else:
             print(f"File {file_path} content is identical. No changes made.")
-            return False
+            return False, None
     except FileNotFoundError:
-        return True
+        return False, None
 
 def update_project_structure(file_path):
     with open('project_structure.json', 'r') as f:
@@ -2072,7 +2102,7 @@ def test_and_debug_mode(llm_client):
 
     JustStarted = True
     
-    global COMMAND_HISTORY_FILE
+    global COMMAND_HISTORY_FILE, TASK
     print(f"Created new command history file: {COMMAND_HISTORY_FILE}")
 
     # Add this function to handle unexpected terminations
@@ -2142,13 +2172,19 @@ def test_and_debug_mode(llm_client):
 
     # Previous action analysis
     previous_action_analysis = None
+    previous_file_diff = None
     ModifiedFile = False
     if user_suggestion != "":
         command_history.append({"user_message": user_suggestion})
         save_command_history(command_history)
 
     # Ask user for message on what user wants to do for this session
-    user_session_message = input("What would you like to accomplish in this session? ")
+    if TASK:
+        print(f"Task for this session: {TASK}")
+        user_session_message = TASK
+    else:
+        # Ask user for task for this session since it's not specified in the command line.
+        user_session_message = input("No task specified in the command line. What would you like to accomplish in this session? ")
     # Append this to the command history as the first message
     command_history.append({"user_message": user_session_message})
     save_command_history(command_history)
@@ -2257,6 +2293,8 @@ def test_and_debug_mode(llm_client):
 
         {"Previous action result/analysis/error: " + previous_action_analysis if previous_action_analysis else ""}
 
+        {"Previous file diff: " + previous_file_diff if previous_file_diff else ""}
+
         Provide your response in the following format:
         ACTION: <your chosen action>
         GOAL: <Provide this goal as context for when you're executing the actual command (max 80 words>
@@ -2273,7 +2311,7 @@ def test_and_debug_mode(llm_client):
         HasUserInterrupted = False
         ModifiedFile = False
         previous_action_analysis = None
-
+        previous_file_diff = None
         # For debug, print the process outputs been provided
         print(f"Running processes for debug: {process_status}")
         print(f"Process outputs for debug: {process_outputs}")
@@ -2290,6 +2328,7 @@ def test_and_debug_mode(llm_client):
         reason_match = re.search(r'REASON:\s*(.*)', response)
         goals_match = re.search(r'GOALS:\s*((?:\d+\.\s*.*\n?)+)', response, re.DOTALL)
         notes_match = re.search(r'NOTES:\s*((?:\d+\.\s*.*\n?)+)', response, re.DOTALL)
+        cot_match = re.search(r'<CoT>(.*?)</CoT>', response, re.DOTALL)
 
         if action_match:
             action = action_match.group(1).strip()
@@ -2352,15 +2391,19 @@ def test_and_debug_mode(llm_client):
                             file_contents[file_path] = read_file(file_path)
 
                     inspection_prompt = f"""
+                    <PREVIOUS_PROMPT>
                     {prompt}
+                    </PREVIOUS_PROMPT>
 
-                    This is the action executor system for your action selection as appended before this text (only use the that as context and don't chose a action).
+                    This is the action executor system for your action selection as included before this text (only use the that as context and don't chose a action).
 
                     You chose to inspect the following files: {', '.join(inspect_files)}
 
                     Reason for this action: {reason}
 
                     Goals for this action: {goals}
+
+                    Chain of Thought for this action: {cot_match}
 
                     Inspect for dependencies between the files. Check that variables, functions, parameters, and return values are used correctly and consistently across the files.
 
@@ -2370,9 +2413,9 @@ def test_and_debug_mode(llm_client):
                     for file_path, content in file_contents.items():
                         inspection_prompt += f"""
                         File: {file_path}
-                        Content:
+                        <FILE_CONTENT>
                         {content}
-
+                        </FILE_CONTENT>
                         """
 
                     inspection_prompt += """
@@ -2567,7 +2610,9 @@ def test_and_debug_mode(llm_client):
 
                 Goals for this action: {goals}
 
-                Please provide the complete updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, while keeping code CONSISTENT across files, you must not make an unnecessary changes to the code. Never remove features unless specified. You must provide the full content since this is directly written to the file without processing. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
+                Chain of Thought for this action: {cot_match}
+
+                Please provide the complete updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, while keeping code CONSISTENT across files, you must not make an unnecessary changes to the code. Never remove features unless specified. You must provide the full content since your output is directly written to the file without processing. Your output should be valid content for the file being written to. If you need to include any explanations, please do so as comments within the code. Remember, you're directly writing to the file!
                 """
                 # Use the following format to provide changes for the file. There should be no other content in your response, only changes to the file content:
                 # - To add a line after a line number: +<line_number>:new_content
@@ -2599,6 +2644,8 @@ def test_and_debug_mode(llm_client):
 
                 Goals given for this action: {goals}
 
+                Chain of Thought for this action: {cot_match}
+
                 Command history (last 10 commands) for better context: {json.dumps(last_n_iterations, indent=2)}
 
                 Summarize the changes made to the file {write_file} for future notes to yourself. Compare the original content:
@@ -2613,7 +2660,7 @@ def test_and_debug_mode(llm_client):
                 previous_action_analysis = changes_summary
                 print(f"Changes summary:\n{changes_summary}")
 
-                changes_made = compare_and_write(write_file, extracted_content)
+                changes_made, changes_made_diff = compare_and_write(write_file, extracted_content)
                 if not changes_made:
                     print("Warning: No actual changes were made in this iteration.")
                     command_entry["result"] = {"warning": "No actual changes were made in this iteration. Use INSPECT to check what changes are needed."}
@@ -2627,7 +2674,7 @@ def test_and_debug_mode(llm_client):
                     save_command_history(command_history)
                     iteration += 1
                     continue
-
+                previous_file_diff = f"Changes for {write_file}:\n{changes_made_diff}"
                 modify_file(write_file, extracted_content)
                 print(f"\nModified {write_file}")
                 ModifiedFile = True
@@ -2728,6 +2775,8 @@ def test_and_debug_mode(llm_client):
 
                             You set these goals: {goals}
 
+                            Chain of Thought for this action: {cot_match}
+
                             Output:
                             {output}
 
@@ -2760,7 +2809,17 @@ def test_and_debug_mode(llm_client):
 
                 # Add UI-specific analysis
                 ui_analysis_prompt = f"""
+                <PREVIOUS_PROMPT>
+                {prompt}
+                </PREVIOUS_PROMPT>
+
                 You executed a UI action: {action}
+
+                You gave this reason: {reason}
+
+                You set these goals: {goals}
+
+                Chain of Thought for this action: {cot_match}
                 
                 The result was: {"successful" if success else "unsuccessful"}
                 
@@ -2794,11 +2853,11 @@ def test_and_debug_mode(llm_client):
             if unchanged_files[file] == 0:
                 del unchanged_files[file]
 
-        if retry_with_expert:
-            # Switch back
-            if isinstance(llm_client, VertexAILLM):
-                llm_client.switch_model("claude-3-5-sonnet-20240620")
-            retry_with_expert = False
+        #if retry_with_expert:
+        #    # Switch back
+        #    if isinstance(llm_client, VertexAILLM):
+        #        llm_client.switch_model("claude-3-5-sonnet-20240620")
+        #    retry_with_expert = False
 
     kill_all_processes()
 
@@ -3053,7 +3112,7 @@ def load_env_variables():
         exit(1)
 
 def main():
-    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, llm_client
+    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client
 
     parser = argparse.ArgumentParser(description="DevLM Bootstrap script")
     parser.add_argument("--frontend", action="store_true", help="Enable frontend testing")
@@ -3091,6 +3150,11 @@ def main():
         default=".",
         help="Specify the path to the project directory (default: current directory)"
     )
+    parser.add_argument(
+        "--task",
+        default=None,
+        help="Specify the task to perform (default: None)"
+    )
     args = parser.parse_args()
 
     MODEL = args.model
@@ -3099,7 +3163,7 @@ def main():
     PROJECT_ID = args.project_id
     REGION = args.region
     PROJECT_PATH = args.project_path
-
+    TASK = args.task
     frontend_testing_enabled = args.frontend
 
     # Load environment variables and validate settings
