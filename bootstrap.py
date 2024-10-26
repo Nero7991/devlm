@@ -308,6 +308,7 @@ TEST_PROGRESS_FILE = os.path.join(DEVLM_FOLDER, "test_progress.json")
 CHAT_FILE = os.path.join(DEVLM_FOLDER, "chat.txt")
 PROJECT_STRUCTURE_FILE = os.path.join(DEVLM_FOLDER, "project_structure.json")
 TASK = None
+write_mode = 'direct'
 
 # Update the COMMAND_HISTORY_FILE and HISTORY_BRIEF_FILE
 COMMAND_HISTORY_FILE = os.path.join(DEVLM_FOLDER, f"command_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
@@ -2098,7 +2099,7 @@ def get_tree_structure():
     return "\n".join(tree)
 
 def test_and_debug_mode(llm_client):
-    global unchanged_files, last_inspected_files, user_suggestion
+    global unchanged_files, last_inspected_files, user_suggestion, WRITE_MODE
 
     JustStarted = True
     
@@ -2601,88 +2602,89 @@ def test_and_debug_mode(llm_client):
 
                 """
 
-                inspection_prompt += f"""
-                Use the contents of the provided files to modify the file {write_file}, consider the previous action, reason and goals for the modification. Use chain of thought to make the modifications.
+                if WRITE_MODE == "direct":
+                    inspection_prompt += f"""
+                    Use the contents of the provided files to modify the file {write_file}, consider the previous action, reason and goals for the modification. Use chain of thought to make the modifications.
 
-                {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
+                    {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
 
-                Reason for this action: {reason}
+                    Reason for this action: {reason}
 
-                Goals for this action: {goals}
+                    Goals for this action: {goals}
 
-                Chain of Thought for this action: {cot_match}
+                    Chain of Thought for this action: {cot_match}
 
-                Please provide the complete updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, while keeping code CONSISTENT across files, you must not make an unnecessary changes to the code. Never remove features unless specified. You must provide the full content since your output is directly written to the file without processing. Your output should be valid content for the file being written to. If you need to include any explanations, please do so as comments within the code. Remember, you're directly writing to the file!
-                """
-                # Use the following format to provide changes for the file. There should be no other content in your response, only changes to the file content:
-                # - To add a line after a line number: +<line_number>:new_content
-                # - To remove a line: -<line_number>
-                # - To modify a line: <line_number>:new_content
+                    Please provide the complete updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, while keeping code CONSISTENT across files, you must not make an unnecessary changes to the code. Never remove features unless specified. You must provide the full content since your output is directly written to the file without processing. Your output should be valid content for the file being written to. If you need to include any explanations, please do so as comments within the code. Remember, you're directly writing to the file!
+                    """
+                    # Use the following format to provide changes for the file. There should be no other content in your response, only changes to the file content:
+                    # - To add a line after a line number: +<line_number>:new_content
+                    # - To remove a line: -<line_number>
+                    # - To modify a line: <line_number>:new_content
 
-                # If retry_with_expert is set, token = 4096, else 8192
-                if retry_with_expert:
-                    new_content = llm_client.generate_response(inspection_prompt, 4096)
-                else:
-                    new_content = llm_client.generate_response(inspection_prompt, 8192)
+                    # If retry_with_expert is set, token = 4096, else 8192
+                    if retry_with_expert:
+                        new_content = llm_client.generate_response(inspection_prompt, 4096)
+                    else:
+                        new_content = llm_client.generate_response(inspection_prompt, 8192)
 
-                # new_content = llm_client.generate_response(inspection_prompt, )  # Increased token limit for multiple files
-                extracted_content = extract_content(new_content, write_file)
+                    # new_content = llm_client.generate_response(inspection_prompt, )  # Increased token limit for multiple files
+                    extracted_content = extract_content(new_content, write_file)
 
-                # Print changes
-                # print(f"Changes:\n{changes}")
-                # Parse and apply changes
-                # current_content = remove_line_numbers(file_contents[write_file])
-                # parsed_changes = parse_changes(changes)
-                # new_content = apply_changes(current_content, parsed_changes)
-                                
-                changes_prompt = f"""
-                You are a professional software architect and developer.
+                    # Print changes
+                    # print(f"Changes:\n{changes}")
+                    # Parse and apply changes
+                    # current_content = remove_line_numbers(file_contents[write_file])
+                    # parsed_changes = parse_changes(changes)
+                    # new_content = apply_changes(current_content, parsed_changes)
+                                    
+                    changes_prompt = f"""
+                    You are a professional software architect and developer.
 
-                You inspected multiple files and modified one of them. 
+                    You inspected multiple files and modified one of them. 
 
-                Reason given for this action: {reason}
+                    Reason given for this action: {reason}
 
-                Goals given for this action: {goals}
+                    Goals given for this action: {goals}
 
-                Chain of Thought for this action: {cot_match}
+                    Chain of Thought for this action: {cot_match}
 
-                Command history (last 10 commands) for better context: {json.dumps(last_n_iterations, indent=2)}
+                    Command history (last 10 commands) for better context: {json.dumps(last_n_iterations, indent=2)}
 
-                Summarize the changes made to the file {write_file} for future notes to yourself. Compare the original content:
-                {read_file(write_file)}
+                    Summarize the changes made to the file {write_file} for future notes to yourself. Compare the original content:
+                    {read_file(write_file)}
 
-                With the new content:
-                {extracted_content}
+                    With the new content:
+                    {extracted_content}
 
-                This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less:
-                """
-                changes_summary = llm_client.generate_response(changes_prompt, 1000)
-                previous_action_analysis = changes_summary
-                print(f"Changes summary:\n{changes_summary}")
+                    This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less:
+                    """
+                    changes_summary = llm_client.generate_response(changes_prompt, 1000)
+                    previous_action_analysis = changes_summary
+                    print(f"Changes summary:\n{changes_summary}")
 
-                changes_made, changes_made_diff = compare_and_write(write_file, extracted_content)
-                if not changes_made:
-                    print("Warning: No actual changes were made in this iteration.")
-                    command_entry["result"] = {"warning": "No actual changes were made in this iteration. Use INSPECT to check what changes are needed."}
+                    changes_made, changes_made_diff = compare_and_write(write_file, extracted_content)
+                    if not changes_made:
+                        print("Warning: No actual changes were made in this iteration.")
+                        command_entry["result"] = {"warning": "No actual changes were made in this iteration. Use INSPECT to check what changes are needed."}
 
-                    # Add the file to unchanged_files with a counter of 2
-                    unchanged_files[write_file] = 2
+                        # Add the file to unchanged_files with a counter of 2
+                        unchanged_files[write_file] = 2
 
-                    command_entry["error"] = f"The file {write_file} cannot be modified for the next 2 successful iterations due to no changes in this attempt. Use INSPECT to increase the count."
+                        command_entry["error"] = f"The file {write_file} cannot be modified for the next 2 successful iterations due to no changes in this attempt. Use INSPECT to increase the count."
 
-                    command_history.append(command_entry)
-                    save_command_history(command_history)
-                    iteration += 1
-                    continue
-                previous_file_diff = f"Changes for {write_file}:\n{changes_made_diff}"
-                modify_file(write_file, extracted_content)
-                print(f"\nModified {write_file}")
-                ModifiedFile = True
-                
-                # technical_brief = update_technical_brief(write_file, new_content, iteration, mode="test", test_info=changes_summary)
-                update_test_progress(current_step=f"Inspected multiple files and modified {write_file}")
-                
-                command_entry["result"] = {"changes_summary": changes_summary}
+                        command_history.append(command_entry)
+                        save_command_history(command_history)
+                        iteration += 1
+                        continue
+                    previous_file_diff = f"Changes for {write_file}:\n{changes_made_diff}"
+                    modify_file(write_file, extracted_content)
+                    print(f"\nModified {write_file}")
+                    ModifiedFile = True
+                    
+                    # technical_brief = update_technical_brief(write_file, new_content, iteration, mode="test", test_info=changes_summary)
+                    update_test_progress(current_step=f"Inspected multiple files and modified {write_file}")
+                    
+                    command_entry["result"] = {"changes_summary": changes_summary}
 
                 # If change summary has "FILES ARE IDENTICAL", set retry_with_expert to True
                 # if "FILES ARE IDENTICAL" in changes_summary:
@@ -3112,7 +3114,7 @@ def load_env_variables():
         exit(1)
 
 def main():
-    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client
+    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client, WRITE_MODE
 
     parser = argparse.ArgumentParser(description="DevLM Bootstrap script")
     parser.add_argument("--frontend", action="store_true", help="Enable frontend testing")
@@ -3155,6 +3157,12 @@ def main():
         default=None,
         help="Specify the task to perform (default: None)"
     )
+    parser.add_argument(
+        "--write-mode",
+        choices=["direct", "diff"],
+        default="direct",
+        help="Specify the write mode: 'direct' or 'diff' (default: direct)"
+    )
     args = parser.parse_args()
 
     MODEL = args.model
@@ -3165,6 +3173,7 @@ def main():
     PROJECT_PATH = args.project_path
     TASK = args.task
     frontend_testing_enabled = args.frontend
+    WRITE_MODE = args.write_mode
 
     # Load environment variables and validate settings
     load_env_variables()
