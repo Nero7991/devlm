@@ -308,7 +308,7 @@ TEST_PROGRESS_FILE = os.path.join(DEVLM_FOLDER, "test_progress.json")
 CHAT_FILE = os.path.join(DEVLM_FOLDER, "chat.txt")
 PROJECT_STRUCTURE_FILE = os.path.join(DEVLM_FOLDER, "project_structure.json")
 TASK = None
-write_mode = 'direct'
+WRITE_MODE = 'direct'
 
 # Update the COMMAND_HISTORY_FILE and HISTORY_BRIEF_FILE
 COMMAND_HISTORY_FILE = os.path.join(DEVLM_FOLDER, f"command_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
@@ -1570,7 +1570,8 @@ def compare_and_write(file_path, new_content):
                 with open(file_path, 'w') as f:
                     f.write(new_content)
                 print(f"Changes made to {file_path}:")
-                print(''.join(diff))
+                diff = ''.join(diff)
+                print(diff)
                 return True, diff
             else:
                 print(f"No actual changes to write in {file_path}")
@@ -2098,6 +2099,394 @@ def get_tree_structure():
     tree = ['.'] + generate_tree_structure(structure)
     return "\n".join(tree)
 
+
+    """
+    Process LLM's modification commands and apply them to the file content.
+    Returns the modified content and a summary of changes.
+    """
+    try:
+        # Parse the commands from the LLM response
+        commands, error = parse_modification_commands(llm_response)
+        
+        if error:
+            return file_content, error
+            
+        if not commands:
+            return file_content, "No valid modification commands found."
+        
+        # Apply the modifications
+        modified_content, changes_summary = apply_modifications(file_content, commands)
+        
+        return modified_content, changes_summary
+        
+    except Exception as e:
+        return file_content, f"Error processing modifications: {str(e)}"
+    """
+    Process LLM's modification commands and apply them to the file content.
+    Returns the modified content and a summary of changes.
+    """
+    try:
+        # Parse the commands from the LLM response
+        commands, error = parse_modification_commands(llm_response)
+        
+        if error:
+            return file_content, error
+            
+        if not commands:
+            return file_content, "No valid modification commands found."
+        
+        # Apply the modifications
+        modified_content, changes_summary = apply_modifications(file_content, commands)
+        
+        return modified_content, changes_summary
+        
+    except Exception as e:
+        return file_content, f"Error processing modifications: {str(e)}"
+
+
+    """
+    Process LLM's modification commands and apply them to the file content.
+    Returns the modified content and a summary of changes.
+    """
+    try:
+        # Parse the commands from the LLM response
+        commands, error = parse_modification_commands(llm_response)
+        
+        if error:
+            return file_content, error
+            
+        if not commands:
+            return file_content, "No valid commands found."
+        
+        # Apply the modifications
+        modified_content, changes_summary = apply_modifications(file_content, commands)
+        
+        return modified_content, changes_summary
+        
+    except Exception as e:
+        return file_content, f"Error processing modifications: {str(e)}"
+
+
+    """
+    Process LLM's modification commands and apply them to the file content.
+    Returns the modified content and a summary of changes.
+    """
+    try:
+        # Parse the commands from the LLM response
+        commands, error = parse_modification_commands(llm_response)
+        
+        if error:
+            return file_content, error
+            
+        if not commands:
+            return file_content, "No valid modification commands found."
+        
+        # Apply the modifications
+        modified_content, changes_summary = apply_modifications(file_content, commands)
+        
+        return modified_content, changes_summary
+        
+    except Exception as e:
+        return file_content, f"Error processing modifications: {str(e)}"
+
+
+    """
+    Process LLM's modification commands and apply them to the file content.
+    Returns the modified content and a summary of changes.
+    """
+    try:
+        # Parse the commands from the LLM response
+        commands, error = parse_modification_commands(llm_response)
+        
+        if error:
+            return file_content, error
+        
+        # Apply the modifications
+        return apply_modifications(file_content, commands)
+        
+    except Exception as e:
+        return file_content, f"Error processing modifications: {str(e)}"
+
+
+    """
+    Process LLM's modification commands and apply them to the file content.
+    Returns the modified content and a summary of changes.
+    """
+    try:
+        # Parse the commands from the LLM response
+        commands, error = parse_modification_commands(llm_response)
+        
+        if error:
+            return file_content, error
+            
+        if not commands:
+            return file_content, "No valid modification commands found."
+        
+        # Apply the modifications
+        modified_content, changes_summary = apply_modifications(file_content, commands)
+        
+        return modified_content, changes_summary
+        
+    except Exception as e:
+        return file_content, f"Error processing modifications: {str(e)}"
+
+
+    """
+    Process file modifications from LLM response.
+    Returns the modified content and a summary of changes.
+    """
+    commands, error = parse_modification_commands(llm_response)
+    if error:
+        return file_content, error
+    return apply_modifications(file_content, commands)
+
+
+    """
+    Process file modifications from LLM response.
+    Returns the modified content and a summary of changes.
+    """
+    commands, error = parse_modification_commands(llm_response)
+    if error:
+        return file_content, error
+    return apply_modifications(file_content, commands)
+
+def parse_modification_commands(content):
+    """
+    Parse modification commands from LLM response.
+    Enforces the rule that only one type of command can be used at a time.
+    Returns a list of tuples: (command_type, start_line, end_line, new_content) or None if invalid
+    """
+    commands = []
+    current_content = []
+    current_command_type = None
+    command_type = None
+    line_range = None
+    in_content_block = False
+    
+    # Empty content check
+    if not content or not content.strip():
+        return None, "Error: No valid modification commands found."
+
+    lines = content.split('\n')
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        command_line = line.strip()
+        if not command_line:
+            i += 1
+            continue
+            
+        # Check for new command
+        if any(command_line.startswith(cmd) for cmd in ['ADD ', 'REMOVE ', 'MODIFY ']):
+            parts = line.split(':', 1)
+            command_parts = parts[0].strip().split()
+            
+            # Validate command format
+            if len(command_parts) < 2:
+                return None, "No valid modification commands found."
+                
+            command_type = command_parts[0]
+            if command_type not in ['ADD', 'REMOVE', 'MODIFY']:
+                return None, "No valid modification commands found."
+            
+            # Check if we're mixing command types
+            if current_command_type and command_type != current_command_type:
+                return None, f"Error: Cannot mix different command types. Found both {current_command_type} and {command_type}."
+            
+            current_command_type = command_type
+            
+            try:
+                if command_type == 'ADD':
+                    line_num = int(command_parts[1])
+                    line_range = (line_num, line_num)
+                    if len(parts) > 1:
+                        if '<CONTENT_START>' not in parts[1]:
+                            return None, "No valid modification commands found."
+                        content_part = parts[1].split('<CONTENT_START>', 1)[1]
+                        if '<CONTENT_END>' in content_part:
+                            content_part = content_part.split('<CONTENT_END>')[0]
+                            commands.append((command_type, *line_range, content_part))
+                            command_type = None
+                            current_content = []
+                            in_content_block = False
+                        else:
+                            current_content = [content_part]
+                            in_content_block = True
+                elif command_type == 'REMOVE':
+                    line_range = tuple(map(int, command_parts[1].split('-')))
+                    commands.append(('REMOVE', line_range[0], line_range[1], ''))
+                    command_type = None
+                elif command_type == 'MODIFY':
+                    line_range = tuple(map(int, command_parts[1].split('-')))
+                    if len(parts) > 1:
+                        if '<CONTENT_START>' not in parts[1]:
+                            return None, "Error: No valid modification commands found."
+                        content_part = parts[1].split('<CONTENT_START>', 1)[1]
+                        if '<CONTENT_END>' in content_part:
+                            content_part = content_part.split('<CONTENT_END>')[0]
+                            commands.append((command_type, *line_range, content_part))
+                            command_type = None
+                            current_content = []
+                            in_content_block = False
+                        else:
+                            current_content = [content_part]
+                            in_content_block = True
+            except (IndexError, ValueError):
+                return None, "Error: No valid modification commands found."
+            
+        # Content collection for ADD and MODIFY
+        elif current_content and in_content_block:
+            if '<CONTENT_END>' in line:
+                content_part = line.split('<CONTENT_END>')[0]
+                if content_part:
+                    current_content.append(content_part)
+                content_text = '\n'.join(current_content)
+                if content_text:
+                    commands.append((command_type, *line_range, content_text))
+                current_content = []
+                in_content_block = False
+                command_type = None
+            else:
+                current_content.append(line)
+        
+        i += 1
+    
+    if not commands:
+        return None, "Error: No valid modification commands found."
+        
+    return commands, None
+
+def apply_modifications(file_content, commands):
+    """
+    Apply modification commands to the file content.
+    Returns the modified content and a summary of changes.
+    """
+    if not commands:
+        return file_content, "No valid modification commands found."
+        
+    lines = file_content.split('\n')
+    changes_summary = []
+    
+    # All commands should be of the same type, so we can process them in order
+    command_type = commands[0][0]
+    line_adjustment = 0
+    
+    for cmd_type, start_line, end_line, content in commands:
+        adjusted_start = start_line + line_adjustment
+        adjusted_end = end_line + line_adjustment
+        
+        if cmd_type == 'REMOVE':
+            # Ensure valid line numbers
+            if 1 <= adjusted_start <= len(lines) and 1 <= adjusted_end <= len(lines):
+                removed_lines = lines[adjusted_start-1:adjusted_end]
+                del lines[adjusted_start-1:adjusted_end]
+                line_adjustment -= (adjusted_end - adjusted_start + 1)
+                changes_summary.append(f"Removed lines {start_line}-{end_line}:")
+                changes_summary.extend(f"  - {line}" for line in removed_lines)
+            else:
+                changes_summary.append(f"Warning: Could not remove lines {start_line}-{end_line} (out of range)")
+            
+        elif cmd_type == 'MODIFY':
+            # Ensure valid line numbers
+            if 1 <= adjusted_start <= len(lines) and 1 <= adjusted_end <= len(lines):
+                old_content = lines[adjusted_start-1:adjusted_end]
+                new_lines = content.split('\n')
+                lines[adjusted_start-1:adjusted_end] = new_lines
+                line_adjustment += len(new_lines) - (adjusted_end - adjusted_start + 1)
+                
+                changes_summary.append(f"Modified lines {start_line}-{end_line}:")
+                changes_summary.extend(f"  - Old: {line}" for line in old_content)
+                changes_summary.extend(f"  + New: {line}" for line in new_lines)
+            else:
+                changes_summary.append(f"Warning: Could not modify lines {start_line}-{end_line} (out of range)")
+            
+        elif cmd_type == 'ADD':
+            # Ensure valid line number
+            if 0 <= adjusted_start <= len(lines):
+                new_lines = content.split('\n')
+                # For ADD commands, we need to insert after the specified line
+                insert_pos = adjusted_start
+                for new_line in new_lines:
+                    lines.insert(insert_pos, new_line)
+                    insert_pos += 1
+                line_adjustment += len(new_lines)
+                changes_summary.append(f"Added after line {start_line}:")
+                changes_summary.extend(f"  + {line}" for line in new_lines)
+            else:
+                changes_summary.append(f"Warning: Could not add after line {start_line} (out of range)")
+    
+    return '\n'.join(lines), '\n'.join(changes_summary)
+    """
+    Apply modification commands to the file content.
+    Returns the modified content and a summary of changes.
+    """
+    if not commands:
+        return file_content, "No valid modification commands found."
+        
+    lines = file_content.split('\n')
+    changes_summary = []
+    
+    # All commands should be of the same type, so we can process them in order
+    command_type = commands[0][0]
+    line_adjustment = 0
+    
+    for cmd_type, start_line, end_line, content in commands:
+        adjusted_start = start_line + line_adjustment
+        adjusted_end = end_line + line_adjustment
+        
+        if cmd_type == 'REMOVE':
+            # Ensure valid line numbers
+            if 1 <= adjusted_start <= len(lines) and 1 <= adjusted_end <= len(lines):
+                removed_lines = lines[adjusted_start-1:adjusted_end]
+                del lines[adjusted_start-1:adjusted_end]
+                line_adjustment -= (adjusted_end - adjusted_start + 1)
+                changes_summary.append(f"Removed lines {start_line}-{end_line}:")
+                changes_summary.extend(f"  - {line}" for line in removed_lines)
+            else:
+                changes_summary.append(f"Warning: Could not remove lines {start_line}-{end_line} (out of range)")
+            
+        elif cmd_type == 'MODIFY':
+            # Ensure valid line numbers
+            if 1 <= adjusted_start <= len(lines) and 1 <= adjusted_end <= len(lines):
+                old_content = lines[adjusted_start-1:adjusted_end]
+                new_lines = content.split('\n')
+                lines[adjusted_start-1:adjusted_end] = new_lines
+                line_adjustment += len(new_lines) - (adjusted_end - adjusted_start + 1)
+                
+                changes_summary.append(f"Modified lines {start_line}-{end_line}:")
+                changes_summary.extend(f"  - Old: {line}" for line in old_content)
+                changes_summary.extend(f"  + New: {line}" for line in new_lines)
+            else:
+                changes_summary.append(f"Warning: Could not modify lines {start_line}-{end_line} (out of range)")
+            
+        elif cmd_type == 'ADD':
+            # Ensure valid line number
+            if 0 <= adjusted_start <= len(lines):
+                new_lines = content.split('\n')
+                # For ADD commands, we need to insert after the specified line
+                insert_pos = adjusted_start
+                for new_line in new_lines:
+                    lines.insert(insert_pos, new_line)
+                    insert_pos += 1
+                line_adjustment += len(new_lines)
+                changes_summary.append(f"Added after line {start_line}:")
+                changes_summary.extend(f"  + {line}" for line in new_lines)
+            else:
+                changes_summary.append(f"Warning: Could not add after line {start_line} (out of range)")
+    
+    return '\n'.join(lines), '\n'.join(changes_summary)
+
+def process_file_modifications(file_content, llm_response):
+    """
+    Process file modifications from LLM response.
+    Returns the modified content and a summary of changes.
+    """
+    commands, error = parse_modification_commands(llm_response)
+    print(f"Commands:\n{commands}")
+    if error:
+        return file_content, error
+    return apply_modifications(file_content, commands)
+
 def test_and_debug_mode(llm_client):
     global unchanged_files, last_inspected_files, user_suggestion, WRITE_MODE
 
@@ -2601,7 +2990,7 @@ def test_and_debug_mode(llm_client):
                 </FILE_CONTENT>
 
                 """
-
+                print(f"WRITE_MODE: {WRITE_MODE}")
                 if WRITE_MODE == "direct":
                     inspection_prompt += f"""
                     Use the contents of the provided files to modify the file {write_file}, consider the previous action, reason and goals for the modification. Use chain of thought to make the modifications.
@@ -2637,6 +3026,25 @@ def test_and_debug_mode(llm_client):
                     # parsed_changes = parse_changes(changes)
                     # new_content = apply_changes(current_content, parsed_changes)
                                     
+
+                    previous_action_analysis = changes_summary
+                    print(f"Changes summary:\n{changes_summary}")
+
+                    changes_made, changes_made_diff = compare_and_write(write_file, extracted_content)
+                    if not changes_made:
+                        print("Warning: No actual changes were made in this iteration.")
+                        command_entry["result"] = {"warning": "No actual changes were made in this iteration. Use INSPECT to check what changes are needed."}
+
+                        # Add the file to unchanged_files with a counter of 2
+                        unchanged_files[write_file] = 2
+
+                        command_entry["error"] = f"The file {write_file} cannot be modified for the next 2 successful iterations due to no changes in this attempt. Use INSPECT to increase the count."
+
+                        command_history.append(command_entry)
+                        save_command_history(command_history)
+                        iteration += 1
+                        continue
+                    previous_file_diff = f"Changes for {write_file}:\n{changes_made_diff}"
                     changes_prompt = f"""
                     You are a professional software architect and developer.
 
@@ -2659,10 +3067,51 @@ def test_and_debug_mode(llm_client):
                     This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less:
                     """
                     changes_summary = llm_client.generate_response(changes_prompt, 1000)
-                    previous_action_analysis = changes_summary
-                    print(f"Changes summary:\n{changes_summary}")
+                    print(f"\nModified {write_file}")
+                    ModifiedFile = True
+                    
+                    # technical_brief = update_technical_brief(write_file, new_content, iteration, mode="test", test_info=changes_summary)
+                    update_test_progress(current_step=f"Inspected multiple files and modified {write_file}")
+                    
+                    command_entry["result"] = {"changes_summary": changes_summary}
+                else:
+                    inspection_prompt += f"""
+                    Use the contents of the provided files to modify the file {write_file}, consider the previous action, reason and goals for the modification. Use chain of thought to make the modifications.
 
-                    changes_made, changes_made_diff = compare_and_write(write_file, extracted_content)
+                    {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
+
+                    Reason for this action: {reason}
+
+                    Goals for this action: {goals}
+
+                    Chain of Thought for this action: {cot_match}
+
+                    You can modify the file by providing the changes using the following keywords. You can only use one distinct keyword at a time but okay use that distinct keyword multiple times. For example, you can use ADD keyword multiple times to add text multiple times but cannot use ADD and REMOVE or ADD and MODIFY or MODIFY and REMOVE in the same command:
+                    To add any amount of text after a line number: ADD <line_number>:<CONTENT_START>new_content<CONTENT_END>
+                    To remove lines, provide start and end line numbers, separated by a dash. If start and end line numbers are the same, a single line is removed: REMOVE <line_number_start>-<line_number_end>
+                    To modify content, provide the line number range and the new content: MODIFY <line_number_start>-<line_number_end>:<CONTENT_START>new_content<CONTENT_END>
+
+                    Remember to use ONLY DISTINCT keywords at a time.
+                    """
+
+                    if retry_with_expert:
+                        llm_response = llm_client.generate_response(inspection_prompt, 4096)
+                    else:
+                        llm_response = llm_client.generate_response(inspection_prompt, 8192)
+                    print(f"LLM response:\n{llm_response}")
+
+                    # Process the modifications using existing functions
+                    current_content = read_file(write_file)
+                    modified_content, changes_summary = process_file_modifications(current_content, llm_response)
+                    if "Error" in changes_summary:
+                        command_entry["error"] = changes_summary
+                        command_history.append(command_entry)
+                        save_command_history(command_history)
+                        iteration += 1
+                        continue
+
+                    changes_made, changes_made_diff = compare_and_write(write_file, modified_content)
+                    
                     if not changes_made:
                         print("Warning: No actual changes were made in this iteration.")
                         command_entry["result"] = {"warning": "No actual changes were made in this iteration. Use INSPECT to check what changes are needed."}
@@ -2677,15 +3126,39 @@ def test_and_debug_mode(llm_client):
                         iteration += 1
                         continue
                     previous_file_diff = f"Changes for {write_file}:\n{changes_made_diff}"
-                    modify_file(write_file, extracted_content)
                     print(f"\nModified {write_file}")
                     ModifiedFile = True
+
+                                                        
+                    changes_prompt = f"""
+                    You are a professional software architect and developer.
+
+                    You inspected multiple files and modified one of them. 
+
+                    Reason given for this action: {reason}
+
+                    Goals given for this action: {goals}
+
+                    Chain of Thought for this action: {cot_match}
+
+                    Command history (last 10 commands) for better context: {json.dumps(last_n_iterations, indent=2)}
+
+                    Summarize the changes made to the file {write_file} for future notes to yourself. Compare the original content:
+                    {current_content}
+
+                    With the new content:
+                    {modified_content}
+
+                    This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less:
+                    """
+                    changes_summary = llm_client.generate_response(changes_prompt, 1000)
+                    previous_action_analysis = changes_summary
+                    print(f"Changes summary:\n{changes_summary}")
                     
                     # technical_brief = update_technical_brief(write_file, new_content, iteration, mode="test", test_info=changes_summary)
                     update_test_progress(current_step=f"Inspected multiple files and modified {write_file}")
                     
                     command_entry["result"] = {"changes_summary": changes_summary}
-
                 # If change summary has "FILES ARE IDENTICAL", set retry_with_expert to True
                 # if "FILES ARE IDENTICAL" in changes_summary:
                 #     retry_with_expert = True
