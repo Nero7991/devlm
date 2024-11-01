@@ -64,6 +64,7 @@ SOURCE = 'anthropic'  # Default to 'anthropic'
 API_KEY = None
 PROJECT_ID = None
 REGION = None
+NEWLINE = "\n"
 
 # Define the devlm folder path
 DEVLM_FOLDER = ".devlm"
@@ -2415,66 +2416,8 @@ def apply_modifications(file_content, commands):
             else:
                 changes_summary.append(f"Warning: Could not add after line {start_line} (out of range)")
     
-    return '\n'.join(lines), '\n'.join(changes_summary)
-    """
-    Apply modification commands to the file content.
-    Returns the modified content and a summary of changes.
-    """
-    if not commands:
-        return file_content, "No valid modification commands found."
-        
-    lines = file_content.split('\n')
-    changes_summary = []
-    
-    # All commands should be of the same type, so we can process them in order
-    command_type = commands[0][0]
-    line_adjustment = 0
-    
-    for cmd_type, start_line, end_line, content in commands:
-        adjusted_start = start_line + line_adjustment
-        adjusted_end = end_line + line_adjustment
-        
-        if cmd_type == 'REMOVE':
-            # Ensure valid line numbers
-            if 1 <= adjusted_start <= len(lines) and 1 <= adjusted_end <= len(lines):
-                removed_lines = lines[adjusted_start-1:adjusted_end]
-                del lines[adjusted_start-1:adjusted_end]
-                line_adjustment -= (adjusted_end - adjusted_start + 1)
-                changes_summary.append(f"Removed lines {start_line}-{end_line}:")
-                changes_summary.extend(f"  - {line}" for line in removed_lines)
-            else:
-                changes_summary.append(f"Warning: Could not remove lines {start_line}-{end_line} (out of range)")
-            
-        elif cmd_type == 'MODIFY':
-            # Ensure valid line numbers
-            if 1 <= adjusted_start <= len(lines) and 1 <= adjusted_end <= len(lines):
-                old_content = lines[adjusted_start-1:adjusted_end]
-                new_lines = content.split('\n')
-                lines[adjusted_start-1:adjusted_end] = new_lines
-                line_adjustment += len(new_lines) - (adjusted_end - adjusted_start + 1)
-                
-                changes_summary.append(f"Modified lines {start_line}-{end_line}:")
-                changes_summary.extend(f"  - Old: {line}" for line in old_content)
-                changes_summary.extend(f"  + New: {line}" for line in new_lines)
-            else:
-                changes_summary.append(f"Warning: Could not modify lines {start_line}-{end_line} (out of range)")
-            
-        elif cmd_type == 'ADD':
-            # Ensure valid line number
-            if 0 <= adjusted_start <= len(lines):
-                new_lines = content.split('\n')
-                # For ADD commands, we need to insert after the specified line
-                insert_pos = adjusted_start
-                for new_line in new_lines:
-                    lines.insert(insert_pos, new_line)
-                    insert_pos += 1
-                line_adjustment += len(new_lines)
-                changes_summary.append(f"Added after line {start_line}:")
-                changes_summary.extend(f"  + {line}" for line in new_lines)
-            else:
-                changes_summary.append(f"Warning: Could not add after line {start_line} (out of range)")
-    
-    return '\n'.join(lines), '\n'.join(changes_summary)
+    return '\n'.join(lines), '\n'.join(changes_summary), False
+
 
 def process_file_modifications(file_content, llm_response):
     """
@@ -2484,7 +2427,7 @@ def process_file_modifications(file_content, llm_response):
     commands, error = parse_modification_commands(llm_response)
     print(f"Commands:\n{commands}")
     if error:
-        return file_content, error
+        return file_content, "", error
     return apply_modifications(file_content, commands)
 
 def test_and_debug_mode(llm_client):
@@ -2616,81 +2559,81 @@ def test_and_debug_mode(llm_client):
         history_brief_prompt = get_history_brief_for_prompt(history_brief)
 
         prompt = f"""
-        You are in develop, test and debug mode for the project. You are a professional software architect, developer and tester. Adhere to the directives, best practices and provide accurate responses based on the project context. You can refer to the project summary, technical brief, and project structure for information.
+You are in develop, test and debug mode for the project. You are a professional software architect, developer and tester. Adhere to the directives, best practices and provide accurate responses based on the project context. You can refer to the project summary, technical brief, and project structure for information.
 
-        <Project Context>
-        Project Summary:
-        {project_summary}
+<Project Context>
+Project Summary:
+{project_summary}
 
-        Project Structure (you're always in the root directory and cannot navigate to other directories, but can add cd <directory_path> to run commands that need to be run in a specific directory):
-        {directory_tree_structure}
+Project Structure (you're always in the root directory and cannot navigate to other directories, but can add cd <directory_path> to run commands that need to be run in a specific directory):
+{directory_tree_structure}
 
-        User notes: 
-        {last_chat_content}
+User notes: 
+{last_chat_content}
 
-        Action history brief:
-        {history_brief_prompt}
+Action history brief:
+{history_brief_prompt}
 
-        Last {last_actions_context_count} actions:
-        {json.dumps(last_n_iterations, indent=2)}
+Last {last_actions_context_count} actions:
+{json.dumps(last_n_iterations, indent=2)}
 
-        {f"Currently running processes (make sure the ones needed are running): {', '.join(process_status)}" if process_status else "No running processes."}
+{f"Currently running processes (make sure the ones needed are running): {', '.join(process_status)}" if process_status else "No running processes."}
 
-        Latest Process Outputs:
-        {', '.join(process_outputs) if process_outputs else "No new output from background processes."}
+Latest Process Outputs:
+{', '.join(process_outputs) if process_outputs else "No new output from background processes."}
 
-        {"You modified a file in the previous iteration. If you are done with code changes and moving to testing, remember to start/restart the appropriate process using INDEF/RESTART " if ModifiedFile else ""}
+{"You modified a file in the previous iteration. If you are done with code changes and moving to testing, remember to start/restart the appropriate process using INDEF/RESTART " if ModifiedFile else ""}
 
-        {"This session just started, processes that were started in the previous session have been terminated." if JustStarted else ""}
-        </Project Context>
-        <Directives>
-        CRITICAL: Use the previous actions (especially the most recent action) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
-        0. Follow a continuous development, integration, and testing workflow. Do This includes writing code, testing, debugging, and fixing issues.
-        1. Put higher emphasis on the result/anlysis from the last iteration to make progress.
-        2. When doing development, consider reading multiple files to better integrate the current file with the rest of the project.
-        3. Never change code due to development environmental factors (ports, paths, etc.) unless explicitly mentioned in the prompt.
-        4. If there are environment related issue, use raw commands to fix them.
-        5. Use the files in the project structure to understand the context and provide accurate responses. Do not add new files.
-        6. Make sure that we're making progress with each step. If we go around in circles, assume that debug is wrong and start from the beginning.
-        7. Do not repeat the same action multiple times unless absolutely necessary.
-        8. RESTART a process after making changes to the code. This is crucial for the changes to take effect.
-        9. If something is not working, first assume that the process was not restarted after the code change or it has terminated unexpectedly. RESTART the process and check again.
-        </Directives>
+{"This session just started, processes that were started in the previous session have been terminated." if JustStarted else ""}
+</Project Context>
+<Directives>
+CRITICAL: Use the previous actions (especially the most recent action) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
+0. Follow a continuous development, integration, and testing workflow. Do This includes writing code, testing, debugging, and fixing issues.
+1. Put higher emphasis on the result/anlysis from the last iteration to make progress.
+2. When doing development, consider reading multiple files to better integrate the current file with the rest of the project.
+3. Never change code due to development environmental factors (ports, paths, etc.) unless explicitly mentioned in the prompt.
+4. If there are environment related issue, use raw commands to fix them.
+5. Use the files in the project structure to understand the context and provide accurate responses. Do not add new files.
+6. Make sure that we're making progress with each step. If we go around in circles, assume that debug is wrong and start from the beginning.
+7. Do not repeat the same action multiple times unless absolutely necessary.
+8. RESTART a process after making changes to the code. This is crucial for the changes to take effect.
+9. If something is not working, first assume that the process was not restarted after the code change or it has terminated unexpectedly. RESTART the process and check again.
+</Directives>
 
-        You can take the following actions:
+You can take the following actions:
 
-        1. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} syncronously (blocking), use: "RUN: {', '.join(ALLOWED_COMMANDS)}". The script will wait for the command to finish and provide you with the output.
-        2. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} asyncronously (non-blocking), use: "INDEF: <command>". This will run the command in the background and provide you with the initial output.
-        3. Run a raw command that requires approval, use: "RAW: <raw_command>". This will run the command in the shell and provide you with the output. You can use this for any command that is not in the allowed list.
-        4. Check the output of a running process using "CHECK: <command>"
-        5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..." and get the analysis of the files based on the reason and goals.
-        6. Modify one file (should be one of the files being read) (maximum: 4) and read four files by replying with "READ: <file_path1>, <file_path2>, <file_path3>, <file_path4>; MODIFY: <file_path(1,2,3,4)>" 
-        7. Chat with the user for help or to give feedback by replying with "CHAT: <your question/feedback>". Do this when you see that no progress is being made.
-        8. Restart a running process with "RESTART: <command>"
-        9. Finish testing by replying with "DONE"
-        {f'''
-        10. UI Debugging and Testing Actions:
-            - Open a URL: "UI_OPEN: <url>"
-            - Check console logs (Used to debug and check if the page loaded correctly): "UI_CHECK_LOG: <expected_log_message>"
-            - Click a button (with 5-second XHR capture): "UI_CLICK: <button_id>"
-            - Start XHR network capture: "UI_XHR_CAPTURE_START"
-            - Stop XHR network capture and get results: "UI_XHR_CAPTURE_STOP"
-        
-        Current URL: {current_url if current_url else "No URL opened yet"}
-        ''' if frontend_testing_enabled else ''}
+1. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} syncronously (blocking), use: "RUN: {', '.join(ALLOWED_COMMANDS)}". The script will wait for the command to finish and provide you with the output.
+2. Run a command/test from {', '.join(ALLOWED_COMMANDS)} or {', '.join(APPROVAL_REQUIRED_COMMANDS)} asyncronously (non-blocking), use: "INDEF: <command>". This will run the command in the background and provide you with the initial output.
+3. Run a raw command that requires approval, use: "RAW: <raw_command>". This will run the command in the shell and provide you with the output. You can use this for any command that is not in the allowed list.
+4. Check the output of a running process using "CHECK: <command>"
+5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..." and get the analysis of the files based on the reason and goals.
+6. Modify one file (should be one of the files being read) (maximum: 4) and read four files by replying with "READ: <file_path1>, <file_path2>, <file_path3>, <file_path4>; MODIFY: <file_path(1,2,3,4)>" 
+7. Chat with the user for help or to give feedback by replying with "CHAT: <your question/feedback>". Do this when you see that no progress is being made.
+8. Restart a running process with "RESTART: <command>"
+9. Finish testing by replying with "DONE"
+{f'''
+10. UI Debugging and Testing Actions:
+    - Open a URL: "UI_OPEN: <url>"
+    - Check console logs (Used to debug and check if the page loaded correctly): "UI_CHECK_LOG: <expected_log_message>"
+    - Click a button (with 5-second XHR capture): "UI_CLICK: <button_id>"
+    - Start XHR network capture: "UI_XHR_CAPTURE_START"
+    - Stop XHR network capture and get results: "UI_XHR_CAPTURE_STOP"
 
-        {"Administrator suggestions for this action: " + user_suggestion if HasUserInterrupted else ""}
+Current URL: {current_url if current_url else "No URL opened yet"}
+''' if frontend_testing_enabled else ''}
 
-        {"Previous action result/analysis/error: " + previous_action_analysis if previous_action_analysis else ""}
+{"Administrator suggestions for this action: " + user_suggestion if HasUserInterrupted else ""}
 
-        {"Previous file diff: " + previous_file_diff if previous_file_diff else ""}
+{"Previous action result/analysis/error: " + previous_action_analysis if previous_action_analysis else ""}
 
-        Provide your response in the following format:
-        ACTION: <your chosen action>
-        GOAL: <Provide this goal as context for when you're executing the actual command (max 80 words>
-        REASON: <Provide this as reason and context for when you're executing the actual command (max 80 words)>
+{"Previous file diff: " + previous_file_diff if previous_file_diff else ""}
 
-        What would you like to do next to complete the user's task? Once the user task is accomplished, use "CHAT" to ask for feedback, if they say, there is nothing else to do, use "DONE". Use Chain of Thought (CoT) in project context, past actions/chat and directives to decide the next action. Think why the chosen action is the correct one, that you've considered the directives and previous actions. CoT can be included in <CoT> tags.
+Provide your response in the following format:
+ACTION: <your chosen action>
+GOAL: <Provide this goal as context for when you're executing the actual command (max 80 words>
+REASON: <Provide this as reason and context for when you're executing the actual command (max 80 words)>
+
+What would you like to do next to complete the user's task? Once the user task is accomplished, use "CHAT" to ask for feedback, if they say, there is nothing else to do, use "DONE". Use Chain of Thought (CoT) in project context, past actions/chat and directives to decide the next action. Think why the chosen action is the correct one, that you've considered the directives and previous actions. CoT can be included in <CoT> tags.
         """
         # - Check element text (Use to debug contents of an element): "UI_CHECK_TEXT: <element_id>: <expected_text>"
         # if running_processes:
@@ -2781,23 +2724,23 @@ def test_and_debug_mode(llm_client):
                             file_contents[file_path] = read_file(file_path)
 
                     inspection_prompt = f"""
-                    <PREVIOUS_PROMPT>
-                    {prompt}
-                    </PREVIOUS_PROMPT>
+<PREVIOUS_PROMPT_START>
+{prompt}
+<PREVIOUS_PROMPT_END>
 
-                    This is the action executor system for your action selection as included before this text (only use the that as context and don't chose a action).
+This is the action executor system for your action selection as included before this text (only use the that as context and don't chose a action).
 
-                    You chose to inspect the following files: {', '.join(inspect_files)}
+You chose to inspect the following files: {', '.join(inspect_files)}
 
-                    Reason for this action: {reason}
+Reason for this action: {reason}
 
-                    Goals for this action: {goals}
+Goals for this action: {goals}
 
-                    Chain of Thought for this action: {cot_match}
+Chain of Thought for this action: {cot_match}
 
-                    Inspect for dependencies between the files. Check that variables, functions, parameters, and return values are used correctly and consistently across the files.
+Inspect for dependencies between the files. Check that variables, functions, parameters, and return values are used correctly and consistently across the files.
 
-                    Inspected files:
+Inspected files:
                     """
 
                     for file_path, content in file_contents.items():
@@ -2969,41 +2912,37 @@ def test_and_debug_mode(llm_client):
                         continue
 
                 inspection_prompt = f"""
-                <PREVIOUS_PROMPT>
-                {prompt}
-                </PREVIOUS_PROMPT>
+<PREVIOUS_PROMPT_START>
+{prompt}
+<PREVIOUS_PROMPT_END>
 
-                This is the action executor system for your action selection as appended before this text (only use the that as context and don't chose a action).
+This is the action executor system for your action selection as appended before this text (only use the that as context and don't chose a action).
 
-                You chose to inspect multiple files and modify one of them.
+You chose to inspect multiple files and modify one of them.
 
-                Files to be thoroughly analysed and inspected to modify {write_file} file:
+Files to be thoroughly analysed and inspected to modify {write_file} file:
                 """
 
                 for file_path, content in file_contents.items():
                     inspection_prompt += f"""
-                File: {file_path}
-                Content:
-
-                <FILE_CONTENT>
-                {content}
-                </FILE_CONTENT>
-
-                """
+<FILE_START({file_path})>
+{content}
+<FILE_END({file_path})>
+"""
                 print(f"WRITE_MODE: {WRITE_MODE}")
                 if WRITE_MODE == "direct":
                     inspection_prompt += f"""
-                    Use the contents of the provided files to modify the file {write_file}, consider the previous action, reason and goals for the modification. Use chain of thought to make the modifications.
+Use the contents of the provided files to modify the file {write_file}, consider the previous action, reason and goals for the modification. Use chain of thought to make the modifications.
 
-                    {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
+{"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
 
-                    Reason for this action: {reason}
+Reason for this action: {reason}
 
-                    Goals for this action: {goals}
+Goals for this action: {goals}
 
-                    Chain of Thought for this action: {cot_match}
+Chain of Thought for this action: {cot_match}
 
-                    Please provide the complete updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, while keeping code CONSISTENT across files, you must not make an unnecessary changes to the code. Never remove features unless specified. You must provide the full content since your output is directly written to the file without processing. Your output should be valid content for the file being written to. If you need to include any explanations, please do so as comments within the code. Remember, you're directly writing to the file!
+Please provide the complete updated content for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, while keeping code CONSISTENT across files, you must not make an unnecessary changes to the code. Never remove features unless specified. You must provide the full content since your output is directly written to the file without processing. Your output should be valid content for the file being written to. If you need to include any explanations, please do so as comments within the code. Remember, you're directly writing to the file!
                     """
                     # Use the following format to provide changes for the file. There should be no other content in your response, only changes to the file content:
                     # - To add a line after a line number: +<line_number>:new_content
@@ -3076,24 +3015,22 @@ def test_and_debug_mode(llm_client):
                     command_entry["result"] = {"changes_summary": changes_summary}
                 else:
                     inspection_prompt += f"""
-                    Use the contents of the provided files to modify the file {write_file}, consider the previous action, reason and goals for the modification. Use chain of thought to make the modifications.
+Use the contents of the provided files to modify the file {write_file}, consider the previous action, reason and goals for the modification. Use chain of thought to make the modifications.
+{"{NEWLINE}Previous action result/analysis: " + previous_action_analysis + "{NEWLINE}" if previous_action_analysis else ""}
+Reason for this action: {reason}
 
-                    {"Previous action result/analysis: " + previous_action_analysis if previous_action_analysis else ""}
+Goals for this action: {goals}
 
-                    Reason for this action: {reason}
+Chain of Thought for this action: {cot_match}
 
-                    Goals for this action: {goals}
+You can modify the file by providing the changes using the following keywords. You can only use one distinct keyword at a time but okay use that distinct keyword multiple times. For example, you can use ADD keyword multiple times to add text multiple times but cannot use ADD and REMOVE or ADD and MODIFY or MODIFY and REMOVE in the same command:
+To add any amount of text after a line number: ADD <line_number>:<CONTENT_START>new_content<CONTENT_END>
+To remove lines, provide start and end line numbers, separated by a dash. If start and end line numbers are the same, a single line is removed: REMOVE <line_number_start>-<line_number_end>
+To modify content, provide the line number range and the new content: MODIFY <line_number_start>-<line_number_end>:<CONTENT_START>new_content<CONTENT_END>
 
-                    Chain of Thought for this action: {cot_match}
-
-                    You can modify the file by providing the changes using the following keywords. You can only use one distinct keyword at a time but okay use that distinct keyword multiple times. For example, you can use ADD keyword multiple times to add text multiple times but cannot use ADD and REMOVE or ADD and MODIFY or MODIFY and REMOVE in the same command:
-                    To add any amount of text after a line number: ADD <line_number>:<CONTENT_START>new_content<CONTENT_END>
-                    To remove lines, provide start and end line numbers, separated by a dash. If start and end line numbers are the same, a single line is removed: REMOVE <line_number_start>-<line_number_end>
-                    To modify content, provide the line number range and the new content: MODIFY <line_number_start>-<line_number_end>:<CONTENT_START>new_content<CONTENT_END>
-
-                    Remember to use ONLY DISTINCT keywords at a time.
+Remember to use ONLY ONE TYPE of keyword (only ADD(s) or only REMOVE(s) or only MODIFY(s)).
                     """
-
+                    #print(f"Inspection prompt:\n{inspection_prompt}")
                     if retry_with_expert:
                         llm_response = llm_client.generate_response(inspection_prompt, 4096)
                     else:
@@ -3102,9 +3039,10 @@ def test_and_debug_mode(llm_client):
 
                     # Process the modifications using existing functions
                     current_content = read_file(write_file)
-                    modified_content, changes_summary = process_file_modifications(current_content, llm_response)
-                    if "Error" in changes_summary:
-                        command_entry["error"] = changes_summary
+                    modified_content, changes_summary, Error_in_modifications = process_file_modifications(current_content, llm_response)
+                    if Error_in_modifications:
+                        print(f"Error in modifications: {Error_in_modifications}")
+                        command_entry["error"] = Error_in_modifications
                         command_history.append(command_entry)
                         save_command_history(command_history)
                         iteration += 1
@@ -3131,25 +3069,25 @@ def test_and_debug_mode(llm_client):
 
                                                         
                     changes_prompt = f"""
-                    You are a professional software architect and developer.
+You are a professional software architect and developer.
 
-                    You inspected multiple files and modified one of them. 
+You inspected multiple files and modified one of them. 
 
-                    Reason given for this action: {reason}
+Reason given for this action: {reason}
 
-                    Goals given for this action: {goals}
+Goals given for this action: {goals}
 
-                    Chain of Thought for this action: {cot_match}
+Chain of Thought for this action: {cot_match}
 
-                    Command history (last 10 commands) for better context: {json.dumps(last_n_iterations, indent=2)}
+Command history (last 10 commands) for better context: {json.dumps(last_n_iterations, indent=2)}
 
-                    Summarize the changes made to the file {write_file} for future notes to yourself. Compare the original content:
-                    {current_content}
+Summarize the changes made to the file {write_file} for future notes to yourself. Compare the original content:
+{current_content}
 
-                    With the new content:
-                    {modified_content}
+With the new content:
+{modified_content}
 
-                    This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less:
+This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less:
                     """
                     changes_summary = llm_client.generate_response(changes_prompt, 1000)
                     previous_action_analysis = changes_summary
