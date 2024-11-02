@@ -2268,12 +2268,13 @@ def parse_modification_commands(content):
     if not content or not content.strip():
         return None, "Error: No valid modification commands found."
 
-    lines = content.split('\n')
+    #lines = content.split('\n')
+    lines = content.splitlines(keepends=True)
     i = 0
     while i < len(lines):
         line = lines[i]
         command_line = line.strip()
-        if not command_line:
+        if not command_line and not in_content_block:
             i += 1
             continue
             
@@ -2284,11 +2285,11 @@ def parse_modification_commands(content):
             
             # Validate command format
             if len(command_parts) < 2:
-                return None, "No valid modification commands found."
+                return None, "Error: No valid modification commands found."
                 
             command_type = command_parts[0]
             if command_type not in ['ADD', 'REMOVE', 'MODIFY']:
-                return None, "No valid modification commands found."
+                return None, "Error: No valid modification commands found."
             
             # Check if we're mixing command types
             if current_command_type and command_type != current_command_type:
@@ -2302,25 +2303,6 @@ def parse_modification_commands(content):
                     line_range = (line_num, line_num)
                     if len(parts) > 1:
                         if '<CONTENT_START>' not in parts[1]:
-                            return None, "No valid modification commands found."
-                        content_part = parts[1].split('<CONTENT_START>', 1)[1]
-                        if '<CONTENT_END>' in content_part:
-                            content_part = content_part.split('<CONTENT_END>')[0]
-                            commands.append((command_type, *line_range, content_part))
-                            command_type = None
-                            current_content = []
-                            in_content_block = False
-                        else:
-                            current_content = [content_part]
-                            in_content_block = True
-                elif command_type == 'REMOVE':
-                    line_range = tuple(map(int, command_parts[1].split('-')))
-                    commands.append(('REMOVE', line_range[0], line_range[1], ''))
-                    command_type = None
-                elif command_type == 'MODIFY':
-                    line_range = tuple(map(int, command_parts[1].split('-')))
-                    if len(parts) > 1:
-                        if '<CONTENT_START>' not in parts[1]:
                             return None, "Error: No valid modification commands found."
                         content_part = parts[1].split('<CONTENT_START>', 1)[1]
                         if '<CONTENT_END>' in content_part:
@@ -2332,6 +2314,36 @@ def parse_modification_commands(content):
                         else:
                             current_content = [content_part]
                             in_content_block = True
+                elif command_type == 'REMOVE':
+                    if '-' in command_parts[1]:
+                        line_range = tuple(map(int, command_parts[1].split('-')))
+                    else:
+                        line_num = int(command_parts[1])
+                        line_range = (line_num, line_num)
+                    commands.append(('REMOVE', line_range[0], line_range[1], ''))
+                    command_type = None
+                elif command_type == 'MODIFY':
+                    if '-' in command_parts[1]:
+                        line_range = tuple(map(int, command_parts[1].split('-')))
+                    else:
+                        line_num = int(command_parts[1])
+                        line_range = (line_num, line_num)
+                    if len(parts) > 1:
+                        if '<CONTENT_START>' not in parts[1]:
+                            return None, "Error: No valid modification commands found."
+                        content_part = parts[1].split('<CONTENT_START>', 1)[1]
+                        if '<CONTENT_END>' in content_part:
+                            content_part = content_part.split('<CONTENT_END>')[0]
+                            commands.append((command_type, *line_range, content_part))
+                            command_type = None
+                            current_content = []
+                            in_content_block = False
+                        else:
+                            # Start with empty list since first content part might just have newline
+                            current_content = []
+                            if content_part:  # Only add if not empty
+                                current_content.append(content_part)
+                            in_content_block = True
             except (IndexError, ValueError):
                 return None, "Error: No valid modification commands found."
             
@@ -2339,12 +2351,11 @@ def parse_modification_commands(content):
         elif current_content and in_content_block:
             if '<CONTENT_END>' in line:
                 content_part = line.split('<CONTENT_END>')[0]
-                if content_part:
-                    current_content.append(content_part)
-                content_text = '\n'.join(current_content)
+                current_content.append(content_part)
+                content_text = ''.join(current_content)
                 if content_text:
                     commands.append((command_type, *line_range, content_text))
-                current_content = []
+                #current_content = []
                 in_content_block = False
                 command_type = None
             else:
@@ -2418,7 +2429,6 @@ def apply_modifications(file_content, commands):
     
     return '\n'.join(lines), '\n'.join(changes_summary), False
 
-
 def process_file_modifications(file_content, llm_response):
     """
     Process file modifications from LLM response.
@@ -2427,7 +2437,7 @@ def process_file_modifications(file_content, llm_response):
     commands, error = parse_modification_commands(llm_response)
     print(f"Commands:\n{commands}")
     if error:
-        return file_content, "", error
+        return file_content, error, error
     return apply_modifications(file_content, commands)
 
 def test_and_debug_mode(llm_client):
