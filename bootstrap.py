@@ -68,6 +68,8 @@ NEWLINE = "\n"
 
 # Define the devlm folder path
 DEVLM_FOLDER = ".devlm"
+GLOBAL_MAX_PROMPT_LENGTH = 200000
+Global_error = ""
 
 ALLOWED_COMMANDS = [
     'python3',
@@ -126,6 +128,12 @@ class AnthropicLLM(LLMInterface):
         self.client = client
 
     def generate_response(self, prompt: str, max_tokens: int) -> str:
+        Global_error = ""
+        # make sure the prompt length is less than 200000 else truncate it
+        if len(prompt) > GLOBAL_MAX_PROMPT_LENGTH:
+            prompt = prompt[:GLOBAL_MAX_PROMPT_LENGTH]
+            Global_error = "Prompt length is too long. Truncated to 200000 characters."
+            print(Global_error)
         while True:
             try:
                 response = self.client.messages.create(
@@ -222,6 +230,11 @@ class VertexAILLM(LLMInterface):
         self.model = model or "claude-3-5-sonnet-v2@20241022"  # Default model
 
     def generate_response(self, prompt: str, max_tokens: int) -> str:
+        # make sure the prompt length is less than 200000 else truncate it
+        if len(prompt) > 200000:
+            prompt = prompt[:200000]
+            Global_error = "Prompt length is too long. Truncated to 200000 characters."
+            print(Global_error)
         messages = [{"role": "user", "content": prompt}]
         full_response = ""
         iteration = 0
@@ -1238,6 +1251,11 @@ def check_environment(command):
     # Check current directory
     current_dir = os.getcwd()
     print(f"Current directory: {current_dir}")
+
+    # only check environment if it's go or python
+    if command.split('&&')[-1].strip().split()[0] not in ["go", "python", "python3"]:
+        print("Skipping environment check for non-Go or non-Python command.")
+        return True, "success"
     
     # Check if we're in the project root (you might want to adjust this check)
     if not os.path.exists("go.mod"):
@@ -2646,11 +2664,7 @@ You can take the following actions:
 Current URL: {current_url if current_url else "No URL opened yet"}
 ''' if frontend_testing_enabled else ''}
 
-{"Administrator suggestions for this action: " + user_suggestion if HasUserInterrupted else ""}
-
-{"Previous action result/analysis/error: " + previous_action_analysis if previous_action_analysis else ""}
-
-{"Previous file diff: " + previous_file_diff if previous_file_diff else ""}
+{"{NEWLINE}Administrator suggestions for this action: " + user_suggestion + "{NEWLINE}" if HasUserInterrupted else ""}{"{NEWLINE}Previous action result/analysis/error: " + previous_action_analysis + "{NEWLINE}" if previous_action_analysis else ""}{"{NEWLINE}Previous file diff: " + previous_file_diff + "{NEWLINE}" if previous_file_diff else ""}{"{NEWLINE}" + Global_error + "{NEWLINE}" if Global_error else ""}
 
 Provide your response in the following format:
 ACTION: <your chosen action>
