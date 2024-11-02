@@ -356,7 +356,7 @@ TEST_PROGRESS_FILE = os.path.join(DEVLM_FOLDER, "test_progress.json")
 CHAT_FILE = os.path.join(DEVLM_FOLDER, "chat.txt")
 PROJECT_STRUCTURE_FILE = os.path.join(DEVLM_FOLDER, "project_structure.json")
 TASK = None
-WRITE_MODE = 'direct'
+WRITE_MODE = 'diff'
 
 # Update the COMMAND_HISTORY_FILE and HISTORY_BRIEF_FILE
 COMMAND_HISTORY_FILE = os.path.join(DEVLM_FOLDER, f"command_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
@@ -2467,7 +2467,7 @@ def process_file_modifications(file_content, llm_response):
     Returns the modified content and a summary of changes.
     """
     commands, error = parse_modification_commands(llm_response)
-    print(f"Commands:\n{commands}")
+    #print(f"Commands:\n{commands}")
     if error:
         return file_content, error, error
     return apply_modifications(file_content, commands)
@@ -3073,7 +3073,7 @@ Remember to use ONLY ONE TYPE of keyword (only ADD(s) or only REMOVE(s) or only 
                         llm_response = llm_client.generate_response(inspection_prompt, 4096)
                     else:
                         llm_response = llm_client.generate_response(inspection_prompt, 8192)
-                    print(f"LLM response:\n{llm_response}")
+                    #print(f"LLM response:\n{llm_response}")
 
                     # Process the modifications using existing functions
                     current_content = read_file(write_file)
@@ -3609,8 +3609,8 @@ def main():
     parser.add_argument(
         "--write-mode",
         choices=["direct", "diff"],
-        default="direct",
-        help="Specify the write mode: 'direct' or 'diff' (default: direct)"
+        default="diff",
+        help="Specify the write mode: 'direct' or 'diff' (default: diff)"
     )
     args = parser.parse_args()
 
