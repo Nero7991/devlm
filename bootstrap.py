@@ -2670,8 +2670,8 @@ Provide your response in the following format:
 ACTION: <your chosen action>
 GOAL: <Provide this goal as context for when you're executing the actual command (max 80 words>
 REASON: <Provide this as reason and context for when you're executing the actual command (max 80 words)>
-
-What would you like to do next to complete the user's task? Once the user task is accomplished, use "CHAT" to ask for feedback, if they say, there is nothing else to do, use "DONE". Use Chain of Thought (CoT) in project context, past actions/chat and directives to decide the next action. Think why the chosen action is the correct one, that you've considered the directives and previous actions. CoT can be included in <CoT> tags.
+<CoT>Your chain of thought for this action</CoT>
+What would you like to do next to complete the user's task? Once the user task is accomplished, use "CHAT" to ask for feedback, if they say, there is nothing else to do, use "DONE". Use Chain of Thought (CoT) in project context, past actions/chat and directives to decide the next action. Think why the chosen action is the correct one, make surethat you've considered the directives and previous actions. Try to keep the response concise and to the point, helps save tokens.
         """
         # - Check element text (Use to debug contents of an element): "UI_CHECK_TEXT: <element_id>: <expected_text>"
         # if running_processes:
@@ -3066,7 +3066,7 @@ To add any amount of text after a line number: ADD <line_number>:<CONTENT_START>
 To remove lines, provide start and end line numbers, separated by a dash. If start and end line numbers are the same, a single line is removed: REMOVE <line_number_start>-<line_number_end>
 To modify content, provide the line number range and the new content: MODIFY <line_number_start>-<line_number_end>:<CONTENT_START>new_content<CONTENT_END>
 
-Remember to use ONLY ONE TYPE of keyword (only ADD(s) or only REMOVE(s) or only MODIFY(s)).
+Remember to use ONLY ONE TYPE of keyword (only ADD(s) or only REMOVE(s) or only MODIFY(s)) and only provide the changes for the file to save tokens.
                     """
                     #print(f"Inspection prompt:\n{inspection_prompt}")
                     if retry_with_expert:
