@@ -69,6 +69,40 @@ NEWLINE = "\n"
 # Define the devlm folder path
 DEVLM_FOLDER = ".devlm"
 
+ALLOWED_COMMANDS = [
+    'python3',
+    'go run',
+    'go test',
+    'docker build',
+    'docker run',
+    'pip3 install',
+    'go mod tidy',
+    'curl',
+    'wget',
+    'cd',
+    'g++',
+    'gcc',
+    'make',
+    'ls',
+    'mkdir',
+    'cp',
+    'mv',
+    'chmod',
+    'chown',
+    'lsof',
+    'netstat',
+    'ss',
+    'pgrep',
+    # Add more commands as needed
+]
+
+APPROVAL_REQUIRED_COMMANDS = [
+    'sudo apt install',
+    './',
+    # Add a raw command that requires approval
+    'RAW: <raw_command>'
+]
+
 try:
     import anthropic
     from anthropic import AnthropicVertex
@@ -827,26 +861,6 @@ def inspect_file_with_approval(file_path):
     except Exception as e:
         return f"Error inspecting file: {str(e)}"
 
-ALLOWED_COMMANDS = [
-    'python3',
-    'go run',
-    'go test',
-    'docker build',
-    'docker run',
-    'pip3 install',
-    'go mod tidy',
-    'curl',
-    'wget',
-    'cd',
-    # Add more commands as needed
-]
-
-APPROVAL_REQUIRED_COMMANDS = [
-    'sudo apt install',
-    './',
-    # Add a raw command that requires approval
-    'RAW: <raw_command>'
-]
 
 def require_approval(command):
     print(f"The following command requires your approval:")
