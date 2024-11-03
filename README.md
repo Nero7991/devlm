@@ -1,7 +1,11 @@
 # DevLM - Software Development with LLMs
 ### Oren's crude attempt at somewhat fully automating software development, testing and integration in his personal projects
 
-Demo video of DevLM modifying and testing the /api/v1/users/register endpoint to /new in [devlm-identity service](https://github.com/Nero7991/devlm-identity) which was fully developed by Claude using DevLM: https://www.youtube.com/watch?v=_xGed1biVoM
+## DevLM in action
+- DevLM trying a leetcode medium problem (2x speed): https://www.youtube.com/watch?v=bfPvsGlh6Og
+- DevLM modifying and testing the /api/v1/users/register endpoint to /new in [devlm-identity service](https://github.com/Nero7991/devlm-identity) which was fully developed by Claude using DevLM: https://www.youtube.com/watch?v=_xGed1biVoM
+
+![](https://github.com/Nero7991/devlm/blob/main/assets/devlm-leetcode-medium.gif)
 
 ## Major Issues
 
