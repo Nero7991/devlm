@@ -95,6 +95,9 @@ ALLOWED_COMMANDS = [
     'netstat',
     'ss',
     'pgrep',
+    'erlc',
+    'echo',
+    'erl',
     # Add more commands as needed
 ]
 
@@ -3203,7 +3206,12 @@ This is for the result section of this command. Provide a brief summary of the m
                 command_entry["result"] = {"restart_output": output}
 
             elif action.upper().startswith("RUN:"):
-                action = action[4:].strip()            
+                action = action[4:].strip()
+                # if the command is not in the ALLOWED_COMMANDS or APPROVAL_REQUIRED_COMMANDS, then it is not allowed to run
+                if not any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS):
+                    print(f"Command not allowed: {action}")
+                    command_entry["error"] = f"Command not allowed: {action}. You can ask the user to add this command to the ALLOWED_COMMANDS list."
+                    continue
                 if any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS):
                     env_check, env_output = check_environment(action)
                     if env_check:
