@@ -64,12 +64,14 @@ SOURCE = 'anthropic'  # Default to 'anthropic'
 API_KEY = None
 PROJECT_ID = None
 REGION = None
+OPENAI_BASE_URL = 'https://api.openai.com/v1'
 NEWLINE = "\n"
 
 # Define the devlm folder path
 DEVLM_FOLDER = ".devlm"
 GLOBAL_MAX_PROMPT_LENGTH = 200000
 Global_error = ""
+GLOBAL_ERROR_PROMPT_LENGTH = "Prompt length is too long. Truncated to 200000 characters. However, this is a FATAL problem that will prevent the LLM from getting other relevant information making it useless. Figure out what is causing prompt length to be too long and fix it."
 
 ALLOWED_COMMANDS = [
     'python3',
@@ -98,6 +100,7 @@ ALLOWED_COMMANDS = [
     'erlc',
     'echo',
     'erl',
+    'west build'
     # Add more commands as needed
 ]
 
@@ -135,7 +138,7 @@ class AnthropicLLM(LLMInterface):
         # make sure the prompt length is less than 200000 else truncate it
         if len(prompt) > GLOBAL_MAX_PROMPT_LENGTH:
             prompt = prompt[:GLOBAL_MAX_PROMPT_LENGTH]
-            Global_error = "Prompt length is too long. Truncated to 200000 characters."
+            Global_error = GLOBAL_ERROR_PROMPT_LENGTH
             print(Global_error)
         while True:
             try:
@@ -222,6 +225,153 @@ class AnthropicLLM(LLMInterface):
         print("Your account has insufficient credit. Please add credit to your account.")
         input("Press Enter once you've added credit to continue, or Ctrl+C to exit...")
 
+class OpenAILLM(LLMInterface):
+    def __init__(self, api_key: str, model: str = "gpt-4", base_url: Optional[str] = None):
+        # Import required modules only when OpenAI LLM is initialized
+        try:
+            import openai
+            from openai import OpenAI
+            import time
+            import random
+            import os
+            import re
+            from typing import Optional
+        except ImportError as e:
+            missing_package = str(e).split("'")[1]
+            if missing_package == "openai":
+                print("Error: openai package is not installed. Please run: pip install openai")
+            else:
+                print(f"Error: Required package {missing_package} is not installed.")
+            sys.exit(1)
+
+        # Store necessary imports as class attributes to use in other methods
+        self._openai = openai
+        self._OpenAI = OpenAI
+        self._time = time
+        self._random = random
+        self._re = re
+        
+        # Initialize the client with optional base_url
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+            print(f"Using custom OpenAI API server: {base_url}")
+        
+        try:
+            self.client = self._OpenAI(**client_kwargs)
+        except Exception as e:
+            print(f"Error initializing OpenAI client: {str(e)}")
+            raise
+
+        self.model = model
+        self.max_retries = 5
+        self.base_delay = 1
+        self.retries = 0
+        self.base_url = base_url
+
+    def generate_response(self, prompt: str, max_tokens: int) -> str:
+        # Make sure the prompt length is less than 200000 else truncate it
+        if len(prompt) > GLOBAL_MAX_PROMPT_LENGTH:
+            prompt = prompt[:GLOBAL_MAX_PROMPT_LENGTH]
+            Global_error = GLOBAL_ERROR_PROMPT_LENGTH
+            print(Global_error)
+
+        while True:
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=max_tokens
+                )
+                return response.choices[0].message.content if response.choices else ""
+
+            except self._openai.RateLimitError as e:
+                if self._handle_error("rate_limit_error", str(e)):
+                    continue
+                raise LLMError("rate_limit_error", str(e))
+
+            except self._openai.APIError as e:
+                if self._handle_error("api_error", str(e)):
+                    continue
+                raise LLMError("api_error", str(e))
+
+            except self._openai.APIConnectionError as e:
+                if self._handle_error("connection_error", str(e)):
+                    continue
+                raise LLMError("connection_error", str(e))
+
+            except self._openai.InsufficientQuotaError as e:
+                if self._handle_error("insufficient_quota", str(e)):
+                    continue
+                raise LLMError("insufficient_quota", str(e))
+
+            except self._openai.InvalidRequestError as e:
+                raise LLMError("invalid_request", str(e))
+
+            except Exception as e:
+                print(f"Unexpected error: {str(e)}")
+                raise
+
+    def _handle_error(self, error_type: str, error_message: str) -> bool:
+        if error_type == "rate_limit_error":
+            wait_time = self._extract_wait_time(error_message)
+            print(f"Rate limit exceeded. Retrying in {wait_time} seconds...")
+            self._time.sleep(wait_time)
+            return True
+
+        elif error_type == "api_error":
+            if self.retries < self.max_retries:
+                wait_time = self._calculate_wait_time(self.retries)
+                print(f"API error. Retrying in {wait_time} seconds...")
+                self._time.sleep(wait_time)
+                self.retries += 1
+                return True
+            return False
+
+        elif error_type == "connection_error":
+            if self.retries < self.max_retries:
+                wait_time = self._calculate_wait_time(self.retries)
+                print(f"Connection error. Retrying in {wait_time} seconds...")
+                self._time.sleep(wait_time)
+                self.retries += 1
+                return True
+            return False
+
+        elif error_type == "insufficient_quota":
+            print("Insufficient quota. Please check your OpenAI account balance.")
+            input("Press Enter once you've added credit to continue, or Ctrl+C to exit...")
+            return True
+
+        return False
+
+    def _calculate_wait_time(self, retries: int) -> float:
+        """Calculate wait time using exponential backoff with jitter."""
+        return self.base_delay * (2 ** retries) + self._random.uniform(0, 1)
+
+    def _extract_wait_time(self, error_message: str) -> int:
+        """Extract wait time from rate limit error message."""
+        try:
+            match = self._re.search(r'(\d+)\s*seconds?', error_message.lower())
+            if match:
+                return int(match.group(1))
+        except:
+            pass
+        return 60  # Default wait time if we can't extract it from the message
+
+    def switch_model(self, new_model: str):
+        """Switch to a different OpenAI model."""
+        self.model = new_model
+        print(f"Switched to model: {self.model}")
+
+    def get_server_info(self) -> dict:
+        """Get information about the current server configuration."""
+        return {
+            "base_url": self.base_url or "https://api.openai.com/v1",
+            "model": self.model,
+            "max_retries": self.max_retries
+        }
 
 class VertexAILLM(LLMInterface):
     def __init__(self, project_id: str, region: str, model: Optional[str] = None):
@@ -236,7 +386,7 @@ class VertexAILLM(LLMInterface):
         # make sure the prompt length is less than 200000 else truncate it
         if len(prompt) > 200000:
             prompt = prompt[:200000]
-            Global_error = "Prompt length is too long. Truncated to 200000 characters."
+            Global_error = GLOBAL_ERROR_PROMPT_LENGTH
             print(Global_error)
         messages = [{"role": "user", "content": prompt}]
         full_response = ""
@@ -343,6 +493,17 @@ def get_llm_client(provider: str = "anthropic", model: Optional[str] = None) -> 
         project_id = PROJECT_ID
         region = REGION
         return VertexAILLM(project_id, region, model)
+    elif provider == "openai":
+        import os
+        if not API_KEY:
+            api_key = os.getenv(API_KEY)
+            if not api_key:
+                raise ValueError("OpenAI API key not provided and API_KEY environment variable not set")
+        return OpenAILLM(
+            api_key=API_KEY, 
+            model=model or "gpt-4o",
+            base_url=SERVER
+        )
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
@@ -829,7 +990,7 @@ def generate_project_structure(root_dir='.'):
     def create_structure(path):
         structure = {"": []}
         for item in os.listdir(path):
-            if item == 'node_modules' or item.startswith('.'):
+            if item == 'node_modules' or item.startswith('.') or item == 'build':
                 continue
             full_path = os.path.join(path, item)
             if os.path.isfile(full_path):
@@ -2703,6 +2864,7 @@ What would you like to do next to complete the user's task? Once the user task i
         goals_match = re.search(r'GOALS:\s*((?:\d+\.\s*.*\n?)+)', response, re.DOTALL)
         notes_match = re.search(r'NOTES:\s*((?:\d+\.\s*.*\n?)+)', response, re.DOTALL)
         cot_match = re.search(r'<CoT>(.*?)</CoT>', response, re.DOTALL)
+        command_entry = {"count": iteration}
 
         if action_match:
             action = action_match.group(1).strip()
@@ -3567,11 +3729,15 @@ def load_env_variables():
             print(f"Error: Invalid SOURCE '{SOURCE}' for MODEL 'claude'. Must be 'gcloud' or 'anthropic'.")
             exit(1)
     else:
-        print(f"Error: Unsupported MODEL '{MODEL}'. Currently only 'claude' is supported.")
-        exit(1)
+        # load openai api key from .env file
+        if SOURCE == 'openai':
+            API_KEY = API_KEY or os.environ.get('API_KEY')
+            if not API_KEY:
+                print("Error: OPENAI_API_KEY must be provided either as a command-line argument or set in the .env file when using OpenAI.")
+                exit(1)
 
 def main():
-    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client, WRITE_MODE
+    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client, WRITE_MODE, SERVER
 
     parser = argparse.ArgumentParser(description="DevLM Bootstrap script")
     parser.add_argument("--frontend", action="store_true", help="Enable frontend testing")
@@ -3588,7 +3754,7 @@ def main():
     )
     parser.add_argument(
         "--source",
-        choices=["gcloud", "anthropic"],
+        choices=["gcloud", "anthropic", "openai"],
         default="anthropic",
         help="Specify the source for the model: 'gcloud' or 'anthropic' (default: anthropic)"
     )
@@ -3603,6 +3769,11 @@ def main():
     parser.add_argument(
         "--region",
         help="Specify the Google Cloud region (only used if source is 'gcloud')"
+    )
+    parser.add_argument(
+        "--server",
+        default="https://api.openai.com/v1",
+        help="Specify the server URL to use (only used if source is 'openai')"
     )
     parser.add_argument(
         "--project-path",
@@ -3627,6 +3798,7 @@ def main():
     API_KEY = args.api_key
     PROJECT_ID = args.project_id
     REGION = args.region
+    SERVER = args.server
     PROJECT_PATH = args.project_path
     TASK = args.task
     frontend_testing_enabled = args.frontend
@@ -3644,12 +3816,23 @@ def main():
         if not API_KEY:
             print("Error: API_KEY must be provided either as a command-line argument or set in the .env file when using Claude with Anthropic.")
             exit(1)
-
+    elif SOURCE == 'openai':
+        if not API_KEY:
+            print("Error: API_KEY must be provided either as a command-line argument or set in the .env file when using OpenAI.")
+            exit(1)
+        # if SERVER url is provided, check if it is valid, make sure it looks like a valid url
+        if SERVER:
+            if not SERVER.startswith("http://") and not SERVER.startswith("https://"):
+                print(f"Error: Invalid SERVER URL '{SERVER}'. Please check the URL and try again.")
+                exit(1)
+    
     # Initialize the LLM client based on the source
     if SOURCE == 'gcloud':
         llm_client = get_llm_client("vertex_ai")  # or "anthropic" based on your preference
     elif SOURCE == 'anthropic':
         llm_client = get_llm_client("anthropic")
+    elif SOURCE == 'openai':
+        llm_client = get_llm_client("openai")
     else:
         print(f"Error: Invalid SOURCE '{SOURCE}' for MODEL 'claude'. Must be 'gcloud' or 'anthropic'.")
         exit(1)
