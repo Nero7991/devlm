@@ -66,6 +66,7 @@ PROJECT_ID = None
 REGION = None
 OPENAI_BASE_URL = 'https://api.openai.com/v1'
 NEWLINE = "\n"
+DEBUG_PROMPT = False
 
 # Define the devlm folder path
 DEVLM_FOLDER = ".devlm"
@@ -100,7 +101,8 @@ ALLOWED_COMMANDS = [
     'erlc',
     'echo',
     'erl',
-    'west build'
+    'west build',
+    'git clone',
     # Add more commands as needed
 ]
 
@@ -129,11 +131,22 @@ class LLMInterface(abc.ABC):
     def generate_response(self, prompt: str, max_tokens: int) -> str:
         pass
 
+    def _write_debug_prompt(self, prompt: str):
+        global DEBUG_PROMPT
+        if DEBUG_PROMPT:
+            with open(os.path.join(DEBUG_PROMPT_FOLDER, f"prompt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"), "w") as f:
+                # Write config details
+                f.write(f"Model: {MODEL}\n")
+                f.write(f"Source: {SOURCE}\n")
+                # Write the prompt
+                f.write(f"Prompt:\n {prompt}")
+
 class AnthropicLLM(LLMInterface):
     def __init__(self, client):
         self.client = client
 
     def generate_response(self, prompt: str, max_tokens: int) -> str:
+        self._write_debug_prompt(prompt)
         Global_error = ""
         # make sure the prompt length is less than 200000 else truncate it
         if len(prompt) > GLOBAL_MAX_PROMPT_LENGTH:
@@ -270,6 +283,7 @@ class OpenAILLM(LLMInterface):
         self.base_url = base_url
 
     def generate_response(self, prompt: str, max_tokens: int) -> str:
+        self._write_debug_prompt(prompt)
         # Make sure the prompt length is less than 200000 else truncate it
         if len(prompt) > GLOBAL_MAX_PROMPT_LENGTH:
             prompt = prompt[:GLOBAL_MAX_PROMPT_LENGTH]
@@ -278,6 +292,8 @@ class OpenAILLM(LLMInterface):
 
         while True:
             try:
+                #print the message length
+                print(f"Message length: {len(prompt)}")
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
@@ -315,6 +331,8 @@ class OpenAILLM(LLMInterface):
                 raise
 
     def _handle_error(self, error_type: str, error_message: str) -> bool:
+        print(f"Error type: {error_type}")
+        print(f"Error message: {error_message}")
         if error_type == "rate_limit_error":
             wait_time = self._extract_wait_time(error_message)
             print(f"Rate limit exceeded. Retrying in {wait_time} seconds...")
@@ -324,7 +342,7 @@ class OpenAILLM(LLMInterface):
         elif error_type == "api_error":
             if self.retries < self.max_retries:
                 wait_time = self._calculate_wait_time(self.retries)
-                print(f"API error. Retrying in {wait_time} seconds...")
+                print(f"API error. Retrying in {wait_time} seconds...")  
                 self._time.sleep(wait_time)
                 self.retries += 1
                 return True
@@ -383,6 +401,7 @@ class VertexAILLM(LLMInterface):
         self.model = model or "claude-3-5-sonnet-v2@20241022"  # Default model
 
     def generate_response(self, prompt: str, max_tokens: int) -> str:
+        self._write_debug_prompt(prompt)
         # make sure the prompt length is less than 200000 else truncate it
         if len(prompt) > 200000:
             prompt = prompt[:200000]
@@ -452,7 +471,7 @@ class VertexAILLM(LLMInterface):
     def _handle_error(self, error_type, error_message):
         print(f"Vertex AI error: {error_type} - {error_message}")
         return False
-
+    
 def get_llm_client(provider: str = "anthropic", model: Optional[str] = None) -> LLMInterface:
     if provider == "anthropic":
         return AnthropicLLM(anthropic.Anthropic(api_key=API_KEY))
@@ -519,12 +538,14 @@ TECHNICAL_BRIEF_FILE = os.path.join(DEVLM_FOLDER, "project_technical_brief.json"
 TEST_PROGRESS_FILE = os.path.join(DEVLM_FOLDER, "test_progress.json")
 CHAT_FILE = os.path.join(DEVLM_FOLDER, "chat.txt")
 PROJECT_STRUCTURE_FILE = os.path.join(DEVLM_FOLDER, "project_structure.json")
+DEBUG_PROMPT_FOLDER = os.path.join(DEVLM_FOLDER + "/debug/prompts/")
 TASK = None
 WRITE_MODE = 'diff'
+MAX_FILE_LENGTH = 20000
 
 # Update the COMMAND_HISTORY_FILE and HISTORY_BRIEF_FILE
-COMMAND_HISTORY_FILE = os.path.join(DEVLM_FOLDER, f"command_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-HISTORY_BRIEF_FILE = os.path.join(DEVLM_FOLDER, f"history_brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+COMMAND_HISTORY_FILE = os.path.join(DEVLM_FOLDER+ "/actions", f"action_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+HISTORY_BRIEF_FILE = os.path.join(DEVLM_FOLDER+ "/briefs", f"history_brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
 
 def wait_until_midnight():
     now = datetime.now()
@@ -1585,6 +1606,39 @@ def add_line_numbers(content):
     numbered_lines = [f"{i+1}:{line}" for i, line in enumerate(lines)]
     return '\n'.join(numbered_lines)
 
+def truncate_content(numbered_content, max_length):
+    """
+    Truncates the numbered content at the first newline after max_length characters
+    and adds a truncation message.
+    
+    Args:
+    numbered_content (str): The content with line numbers
+    max_length (int): Maximum length before truncation
+    
+    Returns:
+    str: Truncated content with truncation message
+    """
+    if len(numbered_content) <= max_length:
+        return numbered_content
+        
+    # Find the first newline after max_length
+    truncation_point = numbered_content.find('\n', max_length)
+    if truncation_point == -1:
+        return numbered_content
+        
+    # Get the truncated content
+    truncated_content = numbered_content[:truncation_point]
+    
+    # Count the remaining lines and characters
+    remaining_content = numbered_content[truncation_point:]
+    remaining_lines = remaining_content.count('\n')
+    remaining_chars = len(remaining_content.replace('\n', ''))
+    
+    # Add truncation message
+    truncation_msg = f"\n<TRUNCATED {remaining_lines} lines and {remaining_chars} characters>"
+    
+    return truncated_content + truncation_msg
+
 def remove_line_numbers(numbered_content):
     """
     Remove line numbers from the given numbered content.
@@ -2637,7 +2691,7 @@ def process_file_modifications(file_content, llm_response):
     return apply_modifications(file_content, commands)
 
 def test_and_debug_mode(llm_client):
-    global unchanged_files, last_inspected_files, user_suggestion, WRITE_MODE
+    global unchanged_files, last_inspected_files, user_suggestion, WRITE_MODE, MAX_FILE_LENGTH
 
     JustStarted = True
     
@@ -2735,6 +2789,11 @@ def test_and_debug_mode(llm_client):
         relative_iteration = iteration - start_iteration + 1
         # if HasUserInterrupted:
         #     user_suggestion = handle_user_suggestion()
+
+        # Update project structure after every iteration (need optimized)
+        project_structure = generate_project_structure()
+        save_project_structure(project_structure)
+        directory_tree_structure = get_tree_structure()
 
         if check_chat_updates():
             chat_updated_iteration = iteration
@@ -3088,6 +3147,7 @@ Inspected files:
                     else:
                         content = read_file(file_path)
                         content = add_line_numbers(content)
+                        content = truncate_content(content, MAX_FILE_LENGTH)
                         file_contents[file_path] = content
 
                 if write_file not in file_contents or file_contents[write_file].startswith("Error: File not found"):
@@ -3372,7 +3432,10 @@ This is for the result section of this command. Provide a brief summary of the m
                 # if the command is not in the ALLOWED_COMMANDS or APPROVAL_REQUIRED_COMMANDS, then it is not allowed to run
                 if not any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS):
                     print(f"Command not allowed: {action}")
-                    command_entry["error"] = f"Command not allowed: {action}. You can ask the user to add this command to the ALLOWED_COMMANDS list."
+                    command_entry["error"] = f"Command not allowed: {action}. Please ask the user to add this command to the ALLOWED_COMMANDS list."
+                    command_history.append(command_entry)
+                    save_command_history(command_history)
+                    iteration += 1
                     continue
                 if any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS):
                     env_check, env_output = check_environment(action)
@@ -3461,6 +3524,7 @@ This is for the result section of this command. Provide a brief summary of the m
             save_command_history(command_history)
         else:
             print("Invalid response format. Please provide an action.")
+            print("Raw response: ", response)
             command_entry["error"] = "Invalid response format. Please provide an action."
         
         JustStarted = False
@@ -3737,7 +3801,7 @@ def load_env_variables():
                 exit(1)
 
 def main():
-    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client, WRITE_MODE, SERVER
+    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client, WRITE_MODE, SERVER, DEBUG_PROMPT
 
     parser = argparse.ArgumentParser(description="DevLM Bootstrap script")
     parser.add_argument("--frontend", action="store_true", help="Enable frontend testing")
@@ -3791,6 +3855,11 @@ def main():
         default="diff",
         help="Specify the write mode: 'direct' or 'diff' (default: diff)"
     )
+    parser.add_argument(
+        "--debug-prompt",
+        action="store_true",
+        help="Enable debug prompt mode"
+    )
     args = parser.parse_args()
 
     MODEL = args.model
@@ -3803,7 +3872,7 @@ def main():
     TASK = args.task
     frontend_testing_enabled = args.frontend
     WRITE_MODE = args.write_mode
-
+    DEBUG_PROMPT = args.debug_prompt
     # Load environment variables and validate settings
     load_env_variables()
 
@@ -3832,7 +3901,7 @@ def main():
     elif SOURCE == 'anthropic':
         llm_client = get_llm_client("anthropic")
     elif SOURCE == 'openai':
-        llm_client = get_llm_client("openai")
+        llm_client = get_llm_client("openai", model=MODEL)
     else:
         print(f"Error: Invalid SOURCE '{SOURCE}' for MODEL 'claude'. Must be 'gcloud' or 'anthropic'.")
         exit(1)
@@ -3843,6 +3912,10 @@ def main():
 
     # Ensure the devlm folder exists
     os.makedirs(DEVLM_FOLDER, exist_ok=True)
+    if DEBUG_PROMPT:
+        os.makedirs(os.path.join(DEVLM_FOLDER, "debug/prompts"), exist_ok=True)
+    os.makedirs(os.path.join(DEVLM_FOLDER, "actions"), exist_ok=True)
+    os.makedirs(os.path.join(DEVLM_FOLDER, "briefs"), exist_ok=True)
 
     if frontend_testing_enabled:
         ensure_chrome_is_running()
