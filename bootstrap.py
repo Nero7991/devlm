@@ -135,11 +135,14 @@ class LLMInterface(abc.ABC):
         global DEBUG_PROMPT
         if DEBUG_PROMPT:
             with open(os.path.join(DEBUG_PROMPT_FOLDER, f"prompt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"), "w") as f:
-                # Write config details
-                f.write(f"Model: {MODEL}\n")
-                f.write(f"Source: {SOURCE}\n")
-                # Write the prompt
-                f.write(f"Prompt:\n {prompt}")
+                f.write(prompt)
+
+    def _write_debug_response(self, response: str):
+        global DEBUG_PROMPT
+        if DEBUG_PROMPT:
+            os.makedirs(DEBUG_RESPONSE_FOLDER, exist_ok=True)
+            with open(os.path.join(DEBUG_RESPONSE_FOLDER, f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"), "w") as f:
+                f.write(response)
 
 class AnthropicLLM(LLMInterface):
     def __init__(self, client):
@@ -162,6 +165,7 @@ class AnthropicLLM(LLMInterface):
                         {"role": "user", "content": prompt}
                     ]
                 )
+                self._write_debug_response(response.content[0].text if response.content else "")
                 return response.content[0].text if response.content else ""
 
             except anthropic.APIError as e:
@@ -301,6 +305,7 @@ class OpenAILLM(LLMInterface):
                     ],
                     max_tokens=max_tokens
                 )
+                self._write_debug_response(response.choices[0].message.content if response.choices else "")
                 return response.choices[0].message.content if response.choices else ""
 
             except self._openai.RateLimitError as e:
@@ -441,6 +446,7 @@ class VertexAILLM(LLMInterface):
                         iteration += 1
                         break
                     else:
+                        self._write_debug_response(full_response)
                         return full_response
 
                 except Exception as e:
@@ -461,7 +467,7 @@ class VertexAILLM(LLMInterface):
             if iteration == max_iterations:
                 print("Reached maximum number of continuation attempts.")
                 break
-
+        self._write_debug_response(full_response)
         return full_response
 
     def switch_model(self, new_model: str):
@@ -539,6 +545,7 @@ TEST_PROGRESS_FILE = os.path.join(DEVLM_FOLDER, "test_progress.json")
 CHAT_FILE = os.path.join(DEVLM_FOLDER, "chat.txt")
 PROJECT_STRUCTURE_FILE = os.path.join(DEVLM_FOLDER, "project_structure.json")
 DEBUG_PROMPT_FOLDER = os.path.join(DEVLM_FOLDER + "/debug/prompts/")
+DEBUG_RESPONSE_FOLDER = os.path.join(DEVLM_FOLDER + "/debug/responses/")
 TASK = None
 WRITE_MODE = 'diff'
 MAX_FILE_LENGTH = 20000
@@ -2319,27 +2326,18 @@ def handle_ui_action(command):
 HasUserInterrupted = False
 user_suggestion = ""
 
-def generate_tree_structure(structure, prefix='', is_last=True):
+def generate_clean_tree(structure, indent=0):
     output = []
-    items = list(structure.items())
     
     # Handle files in current directory
     if "" in structure:
-        files = structure[""]
-        for i, file in enumerate(files):
-            is_last_file = (i == len(files) - 1) and (len(items) == 1 or (len(items) == 2 and "" in structure))
-            output.append(f"{prefix}{'└── ' if is_last_file else '├── '}{file}")
-        if len(items) > 1 or (len(items) == 1 and "" not in structure):
-            output.append(f"{prefix}{'└── ' if is_last else '├── '}.")
+        for file in sorted(structure[""]):
+            output.append("  " * indent + file)
     
     # Handle subdirectories
-    subdirs = [d for d in structure.keys() if d != ""]
-    for i, (subdir, substructure) in enumerate(sorted(structure.items())):
-        if subdir != "":
-            is_last_subdir = i == len(subdirs) - 1
-            output.append(f"{prefix}{'└── ' if is_last_subdir else '├── '}{subdir}")
-            new_prefix = prefix + ('    ' if is_last_subdir else '│   ')
-            output.extend(generate_tree_structure(substructure, new_prefix, is_last_subdir))
+    for subdir in sorted(key for key in structure.keys() if key != ""):
+        output.append("  " * indent + subdir + "/")
+        output.extend(generate_clean_tree(structure[subdir], indent + 1))
     
     return output
 
@@ -2347,8 +2345,12 @@ def get_tree_structure():
     with open(PROJECT_STRUCTURE_FILE, 'r') as f:
         structure = json.load(f)
     
-    tree = ['.'] + generate_tree_structure(structure)
-    return "\n".join(tree)
+    output = ["<files>", "/"]
+    output.extend(generate_clean_tree(structure, indent=1))
+    output.append("</files>")
+    
+    return "\n".join(output)
+
 
 
     """
@@ -2826,32 +2828,41 @@ def test_and_debug_mode(llm_client):
         prompt = f"""
 You are in develop, test and debug mode for the project. You are a professional software architect, developer and tester. Adhere to the directives, best practices and provide accurate responses based on the project context. You can refer to the project summary, technical brief, and project structure for information.
 
-<Project Context>
-Project Summary:
+<context>
+<summary>
 {project_summary}
+</summary>
 
 Project Structure (you're always in the root directory and cannot navigate to other directories, but can add cd <directory_path> to run commands that need to be run in a specific directory):
 {directory_tree_structure}
 
-User notes: 
+<notes>
 {last_chat_content}
+</notes>
 
-Action history brief:
+<history_brief>
 {history_brief_prompt}
+</history_brief>
 
-Last {last_actions_context_count} actions:
+<last_actions>
 {json.dumps(last_n_iterations, indent=2)}
+</last_actions>
 
+<running_processes>
 {f"Currently running processes (make sure the ones needed are running): {', '.join(process_status)}" if process_status else "No running processes."}
+</running_processes>
 
+<process_outputs>
 Latest Process Outputs:
 {', '.join(process_outputs) if process_outputs else "No new output from background processes."}
+</process_outputs>
 
 {"You modified a file in the previous iteration. If you are done with code changes and moving to testing, remember to start/restart the appropriate process using INDEF/RESTART " if ModifiedFile else ""}
 
 {"This session just started, processes that were started in the previous session have been terminated." if JustStarted else ""}
-</Project Context>
-<Directives>
+</context>
+
+<directives>
 CRITICAL: Use the previous actions (especially the most recent action) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
 0. Follow a continuous development, integration, and testing workflow. Do This includes writing code, testing, debugging, and fixing issues.
 1. Put higher emphasis on the result/anlysis from the last iteration to make progress.
@@ -2863,7 +2874,7 @@ CRITICAL: Use the previous actions (especially the most recent action) and notes
 7. Do not repeat the same action multiple times unless absolutely necessary.
 8. RESTART a process after making changes to the code. This is crucial for the changes to take effect.
 9. If something is not working, first assume that the process was not restarted after the code change or it has terminated unexpectedly. RESTART the process and check again.
-</Directives>
+</directives>
 
 You can take the following actions:
 
@@ -3162,7 +3173,7 @@ Inspected files:
                         file_contents[write_file] = ""  # Add empty content to file_contents
 
                         # Update project structure
-                        update_project_structure(write_file)
+                        #update_project_structure(write_file)
                         print(f"Updated project structure with new file: {write_file}")
                     else:
                         error_msg = f"File did not exist. User denied creation of new file: {write_file}. You should work with existing files only."
@@ -3769,10 +3780,11 @@ def load_env_variables():
             for line in f:
                 if line.strip() and not line.startswith('#'):
                     key, value = line.strip().split('=', 1)
+                    print(f"Setting {key} to {value}")
                     os.environ[key] = value
     
     global MODEL, SOURCE, API_KEY, PROJECT_ID, REGION
-    
+    print(f"MODEL: {MODEL}, SOURCE: {SOURCE}, API_KEY: {API_KEY}, PROJECT_ID: {PROJECT_ID}, REGION: {REGION}")
     if MODEL.lower() == 'claude':
         if SOURCE.lower() == 'gcloud':
             if not PROJECT_ID or not REGION:
@@ -3784,10 +3796,12 @@ def load_env_variables():
             print(f"Using Claude via Google Cloud. Project ID: {PROJECT_ID}, Region: {REGION}")
         elif SOURCE.lower() == 'anthropic':
             if not API_KEY:
+                print("API_KEY is not set. Trying to set it from the .env file")
                 API_KEY = API_KEY or os.environ.get('API_KEY')
-                if not API_KEY:
-                    print("Error: API_KEY must be provided either as a command-line argument or set in the .env file when using Claude with Anthropic.")
-                    exit(1)
+                print(f"API_KEY: {API_KEY}")
+            if not API_KEY:
+                print("Error: API_KEY must be provided either as a command-line argument or set in the .env file when using Claude with Anthropic.")
+                exit(1)
             print("Using Claude via Anthropic API.")
         else:
             print(f"Error: Invalid SOURCE '{SOURCE}' for MODEL 'claude'. Must be 'gcloud' or 'anthropic'.")
@@ -3799,6 +3813,23 @@ def load_env_variables():
             if not API_KEY:
                 print("Error: OPENAI_API_KEY must be provided either as a command-line argument or set in the .env file when using OpenAI.")
                 exit(1)
+        elif SOURCE.lower() == 'gcloud':
+            if not PROJECT_ID or not REGION:
+                PROJECT_ID = PROJECT_ID or os.environ.get('PROJECT_ID')
+                REGION = REGION or os.environ.get('REGION')
+                if not PROJECT_ID or not REGION:
+                    print("Error: PROJECT_ID and REGION must be provided either as command-line arguments or set in the .env file when using Claude with Google Cloud.")
+                    exit(1)
+            print(f"Using Claude via Google Cloud. Project ID: {PROJECT_ID}, Region: {REGION}")
+        elif SOURCE.lower() == 'anthropic':
+            if not API_KEY:
+                print("API_KEY is not set. Trying to set it from the .env file")
+                API_KEY = API_KEY or os.environ.get('API_KEY')
+                print(f"API_KEY: {API_KEY}")
+            if not API_KEY:
+                print("Error: API_KEY must be provided either as a command-line argument or set in the .env file when using Claude with Anthropic.")
+                exit(1)
+            print("Using Claude via Anthropic API.")
 
 def main():
     global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client, WRITE_MODE, SERVER, DEBUG_PROMPT
