@@ -298,13 +298,22 @@ class OpenAILLM(LLMInterface):
             try:
                 #print the message length
                 print(f"Message length: {len(prompt)}")
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=max_tokens
-                )
+                if "o1" in self.model or "o3" in self.model:
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "user", "content": prompt}
+                        ],
+                        max_completion_tokens=max_tokens
+                    )
+                else:
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "user", "content": prompt}
+                        ],
+                        max_tokens=max_tokens
+                    )
                 self._write_debug_response(response.choices[0].message.content if response.choices else "")
                 return response.choices[0].message.content if response.choices else ""
 
@@ -549,6 +558,7 @@ DEBUG_RESPONSE_FOLDER = os.path.join(DEVLM_FOLDER + "/debug/responses/")
 TASK = None
 WRITE_MODE = 'diff'
 MAX_FILE_LENGTH = 20000
+NO_APPROVAL = False
 
 # Update the COMMAND_HISTORY_FILE and HISTORY_BRIEF_FILE
 COMMAND_HISTORY_FILE = os.path.join(DEVLM_FOLDER+ "/actions", f"action_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
@@ -1066,7 +1076,6 @@ def inspect_file_with_approval(file_path):
     except Exception as e:
         return f"Error inspecting file: {str(e)}"
 
-
 def require_approval(command):
     print(f"The following command requires your approval:")
     print(command)
@@ -1330,8 +1339,9 @@ def execute_command(command, timeout=600):
         return output, True
     elif command.startswith("RAW:"):
         raw_command = command[4:].strip()
-        if not require_approval(raw_command):
-            return "Command not approved by user.", False
+        if not NO_APPROVAL:
+            if not require_approval(raw_command):
+                return "Command not approved by user.", False
         
         return execute_command_with_timeout(raw_command, timeout)
     else:
@@ -1476,8 +1486,18 @@ def modify_file(file_path, content):
         f.write(content)
 
 def read_file(file_path):
-    with open(file_path, 'r') as f:
-        return f.read()
+    try:
+        with open(file_path, 'r') as f:
+            return f.read()
+    except FileNotFoundError:
+        # Try removing initial '/' if present
+        if file_path.startswith('/'):
+            try:
+                with open(file_path[1:], 'r') as f:
+                    return f.read()
+            except FileNotFoundError:
+                raise
+        raise
 
 def load_technical_brief():
     if os.path.exists(TECHNICAL_BRIEF_FILE):
@@ -2326,28 +2346,58 @@ def handle_ui_action(command):
 HasUserInterrupted = False
 user_suggestion = ""
 
-def generate_clean_tree(structure, indent=0):
+def generate_clean_tree(structure, indent, budget):
     output = []
+    if budget <= 0:
+        return output
+
+    subdirs = sorted([key for key in structure.keys() if key != ""])
+    files = sorted(structure.get("", []))
     
-    # Handle files in current directory
-    if "" in structure:
-        for file in sorted(structure[""]):
-            output.append("  " * indent + file)
-    
-    # Handle subdirectories
-    for subdir in sorted(key for key in structure.keys() if key != ""):
-        output.append("  " * indent + subdir + "/")
-        output.extend(generate_clean_tree(structure[subdir], indent + 1))
-    
+    omitted_subdirs = 0
+    omitted_files = 0
+
+    # Process subdirectories first
+    displayed_subdirs = 0
+    for subdir in subdirs:
+        if budget <= 0:
+            omitted_subdirs = len(subdirs) - displayed_subdirs
+            break
+        # Add the subdirectory entry
+        output.append("  " * indent + f"{subdir}/")
+        budget -= 1
+        displayed_subdirs += 1
+
+        subdir_budget = int((budget -  len(subdirs))/len(subdirs))
+
+        # Process the subdirectory's children with remaining budget
+        child_output = generate_clean_tree(structure[subdir], indent + 1, subdir_budget)
+        output.extend(child_output)
+        budget -= len(child_output)  # Deduct the budget used by children
+
+    # Process files
+    files_to_show = min(len(files), budget)
+    output.extend(["  " * indent + file for file in files[:files_to_show]])
+    omitted_files = len(files) - files_to_show
+    budget -= files_to_show
+
+    # Add truncation message if needed
+    if (omitted_subdirs > 0 or omitted_files > 0) and budget > 0:
+        output.append("  " * indent + f"... ({omitted_files} files, {omitted_subdirs} directories truncated)")
+        budget -= 1
+
     return output
+
+def get_clean_tree(structure):
+    return generate_clean_tree(structure, 1, 1500)
 
 def get_tree_structure():
     with open(PROJECT_STRUCTURE_FILE, 'r') as f:
         structure = json.load(f)
     
-    output = ["<files>", "/"]
-    output.extend(generate_clean_tree(structure, indent=1))
-    output.append("</files>")
+    output = ["<working_directory_structure>", "/"]
+    output.extend(get_clean_tree(structure))
+    output.append("</working_directory_structure>")
     
     return "\n".join(output)
 
@@ -2833,20 +2883,17 @@ You are in develop, test and debug mode for the project. You are a professional 
 {project_summary}
 </summary>
 
-Project Structure (you're always in the root directory and cannot navigate to other directories, but can add cd <directory_path> to run commands that need to be run in a specific directory):
+Current working directory (use 'CD' action to change directory): {os.getcwd()}
+Directory structure for the current working directory:
 {directory_tree_structure}
 
-<notes>
+<user_notes>
 {last_chat_content}
-</notes>
+</user_notes>
 
 <history_brief>
 {history_brief_prompt}
 </history_brief>
-
-<last_actions>
-{json.dumps(last_n_iterations, indent=2)}
-</last_actions>
 
 <running_processes>
 {f"Currently running processes (make sure the ones needed are running): {', '.join(process_status)}" if process_status else "No running processes."}
@@ -2861,6 +2908,10 @@ Latest Process Outputs:
 
 {"This session just started, processes that were started in the previous session have been terminated." if JustStarted else ""}
 </context>
+
+<previous_actions>
+{json.dumps(last_n_iterations, indent=2)}
+</previous_actions>
 
 <directives>
 CRITICAL: Use the previous actions (especially the most recent action) and notes to learn from previous interactions and provide accurate responses. Avoid repeating the same actions. Additional importance to user suggestions.
@@ -2883,12 +2934,13 @@ You can take the following actions:
 3. Run a raw command that requires approval, use: "RAW: <raw_command>". This will run the command in the shell and provide you with the output. You can use this for any command that is not in the allowed list.
 4. Check the output of a running process using "CHECK: <command>"
 5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..." and get the analysis of the files based on the reason and goals.
-6. Modify one file (should be one of the files being read) (maximum: 4) and read four files by replying with "READ: <file_path1>, <file_path2>, <file_path3>, <file_path4>; MODIFY: <file_path(1,2,3,4)>" 
-7. Chat with the user for help or to give feedback by replying with "CHAT: <your question/feedback>". Do this when you see that no progress is being made.
-8. Restart a running process with "RESTART: <command>"
-9. Finish testing by replying with "DONE"
+6. Change the working directory to the specified path, use: "CD: <path>".
+7. Read four files and modify one of them by replying with "READ: <file_path1>, <file_path2>, <file_path3>, <file_path4>; MODIFY: <file_path(1,2,3,4)>" 
+8. Chat with the user for help or to give feedback by replying with "CHAT: <your question/feedback>". Do this when you see that no progress is being made.
+9. Restart a running process with "RESTART: <command>"
+10. Finish testing by replying with "FINISH"
 {f'''
-10. UI Debugging and Testing Actions:
+11. UI Debugging and Testing Actions:
     - Open a URL: "UI_OPEN: <url>"
     - Check console logs (Used to debug and check if the page loaded correctly): "UI_CHECK_LOG: <expected_log_message>"
     - Click a button (with 5-second XHR capture): "UI_CLICK: <button_id>"
@@ -2904,8 +2956,8 @@ Provide your response in the following format:
 ACTION: <your chosen action>
 GOAL: <Provide this goal as context for when you're executing the actual command (max 80 words>
 REASON: <Provide this as reason and context for when you're executing the actual command (max 80 words)>
-<CoT>Your chain of thought for this action</CoT>
-What would you like to do next to complete the user's task? Once the user task is accomplished, use "CHAT" to ask for feedback, if they say, there is nothing else to do, use "DONE". Use Chain of Thought (CoT) in project context, past actions/chat and directives to decide the next action. Think why the chosen action is the correct one, make surethat you've considered the directives and previous actions. Try to keep the response concise and to the point, helps save tokens.
+<cot>Chain of Thought for this action</cot>
+Once the user task is accomplished, use "CHAT" to ask for feedback, if there is nothing else to do, use "FINISH". Use Chain of Thought (CoT) in project context, past actions/chat and directives to decide the next action. Think why the chosen action is the correct one, make surethat you've considered the directives and previous actions. Try to keep the response concise and to the point.
         """
         # - Check element text (Use to debug contents of an element): "UI_CHECK_TEXT: <element_id>: <expected_text>"
         # if running_processes:
@@ -2963,7 +3015,7 @@ What would you like to do next to complete the user's task? Once the user task i
                 command_entry["notes_updated"] = True
 
             elif action.upper().startswith("CHAT:"):
-                question = action.split(":")[1].strip()
+                question = action.split(":", 1)[1].strip().split("\n")[0]
                 print(f"\nAsking for help with the question: {question}")
                 user_response = input("Please provide your response to the model's question: ")        
                 command_entry["user"] = user_response
@@ -2997,9 +3049,11 @@ What would you like to do next to complete the user's task? Once the user task i
                             file_contents[file_path] = read_file(file_path)
 
                     inspection_prompt = f"""
-<PREVIOUS_PROMPT_START>
+<previous_prompt>
 {prompt}
-<PREVIOUS_PROMPT_END>
+</previous_prompt>
+
+The previous prompt is the prompt you were provided before you started this action and provides context for this action.
 
 This is the action executor system for your action selection as included before this text (only use the that as context and don't chose a action).
 
@@ -3058,18 +3112,22 @@ Inspected files:
                 current_content = read_file(file_path)
                 file_brief = get_file_technical_brief(technical_brief, file_path)
                 modification_prompt = f"""
-                {prompt}
+<previous_prompt>
+{prompt}
+</previous_prompt>
 
-                You requested to inspect and rewrite the file {file_path}.
+The previous prompt is the prompt you were provided before you started this action and provides context for this action.
 
-                File content:
-                {current_content}
+You requested to inspect and rewrite the file {file_path}.
 
-                Reason for this action: {reason}
+File content:
+{current_content}
 
-                Goals for this action: {goals}
+Reason for this action: {reason}
 
-                Please provide the updated content for this file, addressing any issues or improvements needed based on your reason. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
+Goals for this action: {goals}
+
+Please provide the updated content for this file, addressing any issues or improvements needed based on your reason. Your output should be valid code ONLY, without any explanations or comments outside the code itself. If you need to include any explanations, please do so as comments within the code.
                 """
                 if retry_with_expert:
                     new_content = llm_client.generate_response(modification_prompt, 4096)
@@ -3186,9 +3244,11 @@ Inspected files:
                         continue
 
                 inspection_prompt = f"""
-<PREVIOUS_PROMPT_START>
+<previous_prompt>
 {prompt}
-<PREVIOUS_PROMPT_END>
+</previous_prompt>
+
+The previous prompt is the prompt you were provided before you started this action and provides context for this action.
 
 This is the action executor system for your action selection as appended before this text (only use the that as context and don't chose a action).
 
@@ -3316,6 +3376,7 @@ Remember to use ONLY ONE TYPE of keyword (only ADD(s) or only REMOVE(s) or only 
                     modified_content, changes_summary, Error_in_modifications = process_file_modifications(current_content, llm_response)
                     if Error_in_modifications:
                         print(f"Error in modifications: {Error_in_modifications}")
+                        print(f"LLM response:\n{llm_response}")
                         command_entry["error"] = Error_in_modifications
                         command_history.append(command_entry)
                         save_command_history(command_history)
@@ -3379,10 +3440,32 @@ This is for the result section of this command. Provide a brief summary of the m
                 #         llm_client.switch_model("claude-3-opus@20240229")
                 #     continue
 
-            elif action.upper() == "DONE":
+            elif action.upper() == "FINISH":
                 print("\nTest and debug mode completed.")
                 command_entry["result"] = "Test and debug mode completed."
                 break
+
+            elif action.upper().startswith("CD:"):
+                path = action.split(":", 1)[1].strip()
+                try:
+
+                    print(f"Changing working directory to: {path}")
+                    command_entry["result"] = f"Changing working directory to: {path}"
+                    command_history.append(command_entry)
+                    save_command_history(command_history)
+                    os.chdir(path)
+                    new_cwd = os.getcwd()
+                    print(f"Changed working directory to: {new_cwd}")
+                    # Update any system tracking variables for current directory
+                    if DEBUG_PROMPT:
+                        os.makedirs(os.path.join(DEVLM_FOLDER, "debug/prompts"), exist_ok=True)
+                        os.makedirs(os.path.join(DEVLM_FOLDER, "debug/responses"), exist_ok=True)
+                    os.makedirs(os.path.join(DEVLM_FOLDER, "actions"), exist_ok=True)
+                    os.makedirs(os.path.join(DEVLM_FOLDER, "briefs"), exist_ok=True)
+                except Exception as e:
+                    error_msg = f"Error changing directory: {str(e)}"
+                    command_entry["error"] = error_msg
+                    print(error_msg)
 
             # Handle raw commands
             elif action.upper().startswith("RAW:"):
@@ -3411,20 +3494,22 @@ This is for the result section of this command. Provide a brief summary of the m
                 print(f"\nChecking: {action}")
                 output, success = execute_command(action)
                 analysis_prompt = f"""
-                <PREVIOUS_PROMPT>
-                {prompt}
-                </PREVIOUS_PROMPT>
+<previous_prompt>
+{prompt}
+</previous_prompt>
 
-                You requested to check this command: {action}.
+The previous prompt is the prompt you were provided before you started this action and provides context for this action.
 
-                You gave this reason: {reason}
+You requested to check this command: {action}.
 
-                You set these goals: {goals}
+You gave this reason: {reason}
 
-                Check result:
-                {output}
+You set these goals: {goals}
 
-                This is for the result section of this command. Analyze the check result and determine if further action is needed. Respond in 100 words or less:
+Check result:
+{output}
+
+This is for the result section of this command. Analyze the check result and determine if further action is needed. Respond in 100 words or less:
                 """
                 analysis = llm_client.generate_response(analysis_prompt, 1000)
 
@@ -3441,14 +3526,14 @@ This is for the result section of this command. Provide a brief summary of the m
             elif action.upper().startswith("RUN:"):
                 action = action[4:].strip()
                 # if the command is not in the ALLOWED_COMMANDS or APPROVAL_REQUIRED_COMMANDS, then it is not allowed to run
-                if not any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS):
+                if (not any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS)) and not NO_APPROVAL:
                     print(f"Command not allowed: {action}")
                     command_entry["error"] = f"Command not allowed: {action}. Please ask the user to add this command to the ALLOWED_COMMANDS list."
                     command_history.append(command_entry)
                     save_command_history(command_history)
                     iteration += 1
                     continue
-                if any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS):
+                if (any(action.startswith(cmd) for cmd in ALLOWED_COMMANDS + APPROVAL_REQUIRED_COMMANDS)) or NO_APPROVAL:
                     env_check, env_output = check_environment(action)
                     if env_check:
                         print(f"\nExecuting command: {action}")
@@ -3460,24 +3545,26 @@ This is for the result section of this command. Provide a brief summary of the m
                             command_entry["suggestion"] = output
                         else:                      
                             analysis_prompt = f"""
-                            <PREVIOUS_PROMPT>
-                            {prompt}
-                            </PREVIOUS_PROMPT>
+<previous_prompt>
+{prompt}
+</previous_prompt>
 
-                            You requested to run this command: {action}.
+The previous prompt is the prompt you were provided before you started this action and provides context for this action.
 
-                            You gave this reason: {reason}
+You requested to run this command: {action}.
 
-                            You set these goals: {goals}
+You gave this reason: {reason}
 
-                            Chain of Thought for this action: {cot_match}
+You set these goals: {goals}
 
-                            Output:
-                            {output}
+Chain of Thought for this action: {cot_match}
 
-                            Execution {'succeeded' if success else 'failed'}
+Output:
+{output}
 
-                            This is for the result section of this command. Respond based on the command execution in 200 words or less (lesser the better). Provide specifics on the success of the command, any errors encountered, and the next steps based on the output. If a test was run, provide the results and any debugging steps (with errors in specific files and lines) trying to fix issues one by one:
+Execution {'succeeded' if success else 'failed'}
+
+This is for the result section of this command. Respond based on the command execution in 200 words or less (lesser the better). Provide specifics on the success of the command, any errors encountered, and the next steps based on the output. If a test was run, provide the results and any debugging steps (with errors in specific files and lines) trying to fix issues one by one:
                             """
                             analysis = llm_client.generate_response(analysis_prompt, 1000)
                             print(f"Command analysis:\n{analysis}")
@@ -3504,23 +3591,25 @@ This is for the result section of this command. Provide a brief summary of the m
 
                 # Add UI-specific analysis
                 ui_analysis_prompt = f"""
-                <PREVIOUS_PROMPT>
-                {prompt}
-                </PREVIOUS_PROMPT>
+<previous_prompt>
+{prompt}
+</previous_prompt>
 
-                You executed a UI action: {action}
+The previous prompt is the prompt you were provided before you started this action and provides context for this action.
 
-                You gave this reason: {reason}
+You executed a UI action: {action}
 
-                You set these goals: {goals}
+You gave this reason: {reason}
 
-                Chain of Thought for this action: {cot_match}
-                
-                The result was: {"successful" if success else "unsuccessful"}
-                
-                Output: {output}
-                
-                Based on this result, provide a brief analysis (max 100 words) of what happened and what should be done next in the UI testing process:
+You set these goals: {goals}
+
+Chain of Thought for this action: {cot_match}
+
+The result was: {"successful" if success else "unsuccessful"}
+
+Output: {output}
+
+Based on this result, provide a brief analysis (max 100 words) of what happened and what should be done next in the UI testing process:
                 """
                 ui_analysis = llm_client.generate_response(ui_analysis_prompt, 1000)
                 command_entry["ui_analysis"] = ui_analysis
@@ -3832,7 +3921,7 @@ def load_env_variables():
             print("Using Claude via Anthropic API.")
 
 def main():
-    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client, WRITE_MODE, SERVER, DEBUG_PROMPT
+    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client, WRITE_MODE, SERVER, DEBUG_PROMPT, NO_APPROVAL
 
     parser = argparse.ArgumentParser(description="DevLM Bootstrap script")
     parser.add_argument("--frontend", action="store_true", help="Enable frontend testing")
@@ -3891,6 +3980,13 @@ def main():
         action="store_true",
         help="Enable debug prompt mode"
     )
+    # Add a flag for not requiring approval for commands
+    parser.add_argument(
+        "--no-approval",
+        action="store_true",
+        default=False,
+        help="Disable approval for commands"
+    )
     args = parser.parse_args()
 
     MODEL = args.model
@@ -3904,6 +4000,7 @@ def main():
     frontend_testing_enabled = args.frontend
     WRITE_MODE = args.write_mode
     DEBUG_PROMPT = args.debug_prompt
+    NO_APPROVAL = args.no_approval
     # Load environment variables and validate settings
     load_env_variables()
 
@@ -3945,6 +4042,7 @@ def main():
     os.makedirs(DEVLM_FOLDER, exist_ok=True)
     if DEBUG_PROMPT:
         os.makedirs(os.path.join(DEVLM_FOLDER, "debug/prompts"), exist_ok=True)
+        os.makedirs(os.path.join(DEVLM_FOLDER, "debug/responses"), exist_ok=True)
     os.makedirs(os.path.join(DEVLM_FOLDER, "actions"), exist_ok=True)
     os.makedirs(os.path.join(DEVLM_FOLDER, "briefs"), exist_ok=True)
 
