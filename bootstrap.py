@@ -2401,158 +2401,6 @@ def get_tree_structure():
     
     return "\n".join(output)
 
-
-
-    """
-    Process LLM's modification commands and apply them to the file content.
-    Returns the modified content and a summary of changes.
-    """
-    try:
-        # Parse the commands from the LLM response
-        commands, error = parse_modification_commands(llm_response)
-        
-        if error:
-            return file_content, error
-            
-        if not commands:
-            return file_content, "No valid modification commands found."
-        
-        # Apply the modifications
-        modified_content, changes_summary = apply_modifications(file_content, commands)
-        
-        return modified_content, changes_summary
-        
-    except Exception as e:
-        return file_content, f"Error processing modifications: {str(e)}"
-    """
-    Process LLM's modification commands and apply them to the file content.
-    Returns the modified content and a summary of changes.
-    """
-    try:
-        # Parse the commands from the LLM response
-        commands, error = parse_modification_commands(llm_response)
-        
-        if error:
-            return file_content, error
-            
-        if not commands:
-            return file_content, "No valid modification commands found."
-        
-        # Apply the modifications
-        modified_content, changes_summary = apply_modifications(file_content, commands)
-        
-        return modified_content, changes_summary
-        
-    except Exception as e:
-        return file_content, f"Error processing modifications: {str(e)}"
-
-
-    """
-    Process LLM's modification commands and apply them to the file content.
-    Returns the modified content and a summary of changes.
-    """
-    try:
-        # Parse the commands from the LLM response
-        commands, error = parse_modification_commands(llm_response)
-        
-        if error:
-            return file_content, error
-            
-        if not commands:
-            return file_content, "No valid commands found."
-        
-        # Apply the modifications
-        modified_content, changes_summary = apply_modifications(file_content, commands)
-        
-        return modified_content, changes_summary
-        
-    except Exception as e:
-        return file_content, f"Error processing modifications: {str(e)}"
-
-
-    """
-    Process LLM's modification commands and apply them to the file content.
-    Returns the modified content and a summary of changes.
-    """
-    try:
-        # Parse the commands from the LLM response
-        commands, error = parse_modification_commands(llm_response)
-        
-        if error:
-            return file_content, error
-            
-        if not commands:
-            return file_content, "No valid modification commands found."
-        
-        # Apply the modifications
-        modified_content, changes_summary = apply_modifications(file_content, commands)
-        
-        return modified_content, changes_summary
-        
-    except Exception as e:
-        return file_content, f"Error processing modifications: {str(e)}"
-
-
-    """
-    Process LLM's modification commands and apply them to the file content.
-    Returns the modified content and a summary of changes.
-    """
-    try:
-        # Parse the commands from the LLM response
-        commands, error = parse_modification_commands(llm_response)
-        
-        if error:
-            return file_content, error
-        
-        # Apply the modifications
-        return apply_modifications(file_content, commands)
-        
-    except Exception as e:
-        return file_content, f"Error processing modifications: {str(e)}"
-
-
-    """
-    Process LLM's modification commands and apply them to the file content.
-    Returns the modified content and a summary of changes.
-    """
-    try:
-        # Parse the commands from the LLM response
-        commands, error = parse_modification_commands(llm_response)
-        
-        if error:
-            return file_content, error
-            
-        if not commands:
-            return file_content, "No valid modification commands found."
-        
-        # Apply the modifications
-        modified_content, changes_summary = apply_modifications(file_content, commands)
-        
-        return modified_content, changes_summary
-        
-    except Exception as e:
-        return file_content, f"Error processing modifications: {str(e)}"
-
-
-    """
-    Process file modifications from LLM response.
-    Returns the modified content and a summary of changes.
-    """
-    commands, error = parse_modification_commands(llm_response)
-    if error:
-        return file_content, error
-    return apply_modifications(file_content, commands)
-
-
-    """
-    Process file modifications from LLM response.
-    Returns the modified content and a summary of changes.
-    """
-    commands, error = parse_modification_commands(llm_response)
-    if error:
-        return file_content, error
-    return apply_modifications(file_content, commands)
-
 def parse_modification_commands(content):
     """
     Parse modification commands from LLM response.
@@ -2746,6 +2594,7 @@ def test_and_debug_mode(llm_client):
     global unchanged_files, last_inspected_files, user_suggestion, WRITE_MODE, MAX_FILE_LENGTH
 
     JustStarted = True
+    JustChangedWorkingDirectory = False
     
     global COMMAND_HISTORY_FILE, TASK
     print(f"Created new command history file: {COMMAND_HISTORY_FILE}")
@@ -2848,9 +2697,10 @@ def test_and_debug_mode(llm_client):
         directory_tree_structure = get_tree_structure()
 
         if check_chat_updates():
-            chat_updated_iteration = iteration
-            print("Chat file updated. Pausing...")
-            wait_for_user_input()
+            if not JustChangedWorkingDirectory:
+                chat_updated_iteration = iteration
+                print("Chat file updated. Pausing...")
+                wait_for_user_input()
 
         last_actions_context_count = 20
         last_n_iterations = get_last_n_iterations(command_history, last_actions_context_count)
@@ -2966,6 +2816,7 @@ Once the user task is accomplished, use "CHAT" to ask for feedback, if there is 
         final_prompt = prompt # + prompt_extension
 
         HasUserInterrupted = False
+        JustChangedWorkingDirectory = False
         ModifiedFile = False
         previous_action_analysis = None
         previous_file_diff = None
@@ -3248,7 +3099,7 @@ Please provide the updated content for this file, addressing any issues or impro
 {prompt}
 </previous_prompt>
 
-The previous prompt is the prompt you were provided before you started this action and provides context for this action.
+The <previous_prompt> is the prompt you were provided before you started this action and provides context for this action. You do not need to respond to the previous prompt, just use it as context for this action.
 
 This is the action executor system for your action selection as appended before this text (only use the that as context and don't chose a action).
 
@@ -3462,6 +3313,7 @@ This is for the result section of this command. Provide a brief summary of the m
                         os.makedirs(os.path.join(DEVLM_FOLDER, "debug/responses"), exist_ok=True)
                     os.makedirs(os.path.join(DEVLM_FOLDER, "actions"), exist_ok=True)
                     os.makedirs(os.path.join(DEVLM_FOLDER, "briefs"), exist_ok=True)
+                    JustChangedWorkingDirectory = True
                 except Exception as e:
                     error_msg = f"Error changing directory: {str(e)}"
                     command_entry["error"] = error_msg
