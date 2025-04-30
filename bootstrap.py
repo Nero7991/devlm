@@ -2848,12 +2848,26 @@ Current URL: {current_url if current_url else "No URL opened yet"}
 {"{NEWLINE}Administrator suggestions for this action: " + user_suggestion + "{NEWLINE}" if HasUserInterrupted else ""}{"{NEWLINE}Previous action result/analysis/error: " + previous_action_analysis + "{NEWLINE}" if previous_action_analysis else ""}{"{NEWLINE}Previous file diff: " + previous_file_diff + "{NEWLINE}" if previous_file_diff else ""}{"{NEWLINE}" + Global_error + "{NEWLINE}" if Global_error else ""}
 
 Provide your response in the following format:
-ACTION: <your chosen action>
+ACTION: <your chosen action> 
 GOAL: <Provide this goal as context for when you're executing the actual command (max 80 words>
 REASON: <Provide this as reason and context for when you're executing the actual command (max 80 words)>
 <cot>Chain of Thought for this action</cot>
 Once the user task is accomplished, use "CHAT" to ask for feedback, if there is nothing else to do, use "FINISH". Use Chain of Thought (CoT) in project context, past actions/chat and directives to decide the next action. Think why the chosen action is the correct one, make surethat you've considered the directives and previous actions. Try to keep the response concise and to the point.
-        """
+Task: {TASK}
+
+Example 1 of a good response:
+'ACTION: READ: file1.txt, file2.txt; MODIFY: file1.txt
+GOAL: Add a new feature to the project
+REASON: The project needs a new feature to improve the user experience
+<cot>Chain of Thought for this action</cot>'
+
+Example 2 of a good response:
+'ACTION: CHAT: What is the goal of this task?
+GOAL: The goal of this task is to improve the user experience
+REASON: The user wants to improve the user experience
+<cot>Chain of Thought for this action</cot>'
+        
+          """
         # - Check element text (Use to debug contents of an element): "UI_CHECK_TEXT: <element_id>: <expected_text>"
         # if running_processes:
         #     final_prompt = prompt + prompt_prcoesses + prompt_extension
@@ -2945,12 +2959,6 @@ Once the user task is accomplished, use "CHAT" to ask for feedback, if there is 
                             file_contents[file_path] = read_file(file_path)
 
                     inspection_prompt = f"""
-<previous_prompt>
-{prompt}
-</previous_prompt>
-
-The previous prompt is the prompt you were provided before you started this action and provides context for this action.
-
 This is the action executor system for your action selection as included before this text (only use the that as context and don't chose a action).
 
 You chose to inspect the following files: {', '.join(inspect_files)}
@@ -3008,12 +3016,6 @@ Inspected files:
                 current_content = read_file(file_path)
                 file_brief = get_file_technical_brief(technical_brief, file_path)
                 modification_prompt = f"""
-<previous_prompt>
-{prompt}
-</previous_prompt>
-
-The previous prompt is the prompt you were provided before you started this action and provides context for this action.
-
 You requested to inspect and rewrite the file {file_path}.
 
 File content:
@@ -3140,12 +3142,6 @@ Please provide the updated content for this file, addressing any issues or impro
                         continue
 
                 inspection_prompt = f"""
-<previous_prompt>
-{prompt}
-</previous_prompt>
-
-The <previous_prompt> is the prompt you were provided before you started this action and provides context for this action. You do not need to respond to the previous prompt, just use it as context for this action.
-
 This is the action executor system for your action selection as appended before this text (only use the that as context and don't chose a action).
 
 You chose to inspect multiple files and modify one of them.
@@ -3253,12 +3249,31 @@ Goals for this action: {goals}
 
 Chain of Thought for this action: {cot_match}
 
-You can modify the file by providing the changes using the following keywords. You can only use one distinct keyword at a time but okay use that distinct keyword multiple times. For example, you can use ADD keyword multiple times to add text multiple times but cannot use ADD and REMOVE or ADD and MODIFY or MODIFY and REMOVE in the same command:
+You can modify the file by providing the changes using the following keywords. You can only use one distinct keyword at a time but okay use that distinct keyword multiple times. For example, you can use ADD keyword multiple times to add text multiple times but cannot use ADD and REMOVE or ADD and MODIFY or MODIFY and REMOVE or any combination of the keywords in the same command:
 To add any amount of text after a line number: ADD <line_number>:<CONTENT_START>new_content<CONTENT_END>
 To remove lines, provide start and end line numbers, separated by a dash. If start and end line numbers are the same, a single line is removed: REMOVE <line_number_start>-<line_number_end>
 To modify content, provide the line number range and the new content: MODIFY <line_number_start>-<line_number_end>:<CONTENT_START>new_content<CONTENT_END>
 
 Remember to use ONLY ONE TYPE of keyword (only ADD(s) or only REMOVE(s) or only MODIFY(s)) and only provide the changes for the file to save tokens.
+
+Example 1 of a good response:
+'ADD 1:new_content
+ADD 2:new_content
+ADD 3:new_content'
+
+Example 2 of a good response:
+'REMOVE 1-3'
+
+Example 3 of a good response:
+'MODIFY 1-3:new_content'
+
+Example 1 of a invalid response:
+'ADD 1:new_content
+REMOVE 1-3'
+
+Example 2 of a invalid response:
+'ADD 1:new_content
+MODIFY 1-3:new_content'
                     """
                     #print(f"Inspection prompt:\n{inspection_prompt}")
                     if retry_with_expert:
@@ -3391,12 +3406,6 @@ This is for the result section of this command. Provide a brief summary of the m
                 print(f"\nChecking: {action}")
                 output, success = execute_command(action)
                 analysis_prompt = f"""
-<previous_prompt>
-{prompt}
-</previous_prompt>
-
-The previous prompt is the prompt you were provided before you started this action and provides context for this action.
-
 You requested to check this command: {action}.
 
 You gave this reason: {reason}
@@ -3442,12 +3451,6 @@ This is for the result section of this command. Analyze the check result and det
                             command_entry["suggestion"] = output
                         else:                      
                             analysis_prompt = f"""
-<previous_prompt>
-{prompt}
-</previous_prompt>
-
-The previous prompt is the prompt you were provided before you started this action and provides context for this action.
-
 You requested to run this command: {action}.
 
 You gave this reason: {reason}
@@ -3488,12 +3491,6 @@ This is for the result section of this command. Respond based on the command exe
 
                 # Add UI-specific analysis
                 ui_analysis_prompt = f"""
-<previous_prompt>
-{prompt}
-</previous_prompt>
-
-The previous prompt is the prompt you were provided before you started this action and provides context for this action.
-
 You executed a UI action: {action}
 
 You gave this reason: {reason}
