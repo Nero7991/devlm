@@ -1,3 +1,4 @@
+print("--- Python Script bootstrap.py Started ---")
 # MIT License
 # 
 # Copyright (c) 2024 Oren Collaco
@@ -67,6 +68,7 @@ REGION = None
 OPENAI_BASE_URL = 'https://api.openai.com/v1'
 NEWLINE = "\n"
 DEBUG_PROMPT = False
+PUBLISHER = 'anthropic' # NEW: Default publisher for Vertex
 
 # Define the devlm folder path
 DEVLM_FOLDER = ".devlm"
@@ -485,59 +487,102 @@ class VertexAILLM(LLMInterface):
 
     def _handle_error(self, error_type, error_message):
         print(f"Vertex AI error: {error_type} - {error_message}")
-        return False
+        return False    
     
-def get_llm_client(provider: str = "anthropic", model: Optional[str] = None) -> LLMInterface:
-    if provider == "anthropic":
-        return AnthropicLLM(anthropic.Anthropic(api_key=API_KEY))
-    elif provider == "vertex_ai":
+
+# --- NEW: Google Vertex LLM Class (using google-cloud-aiplatform) ---
+class GoogleVertexLLM(LLMInterface):
+    def __init__(self, project_id: str, region: str, model: Optional[str] = None):
+        print(f"[GoogleVertexLLM] Initializing...")
+        self.project_id = project_id
+        self.region = region
+        self.model_name = model or "gemini-1.5-flash-001" # Default Google model
         try:
-            from google.auth import default
-            from google.auth.transport.requests import Request
-            from google.oauth2.credentials import Credentials
             from google.cloud import aiplatform
+            from vertexai.generative_models import GenerativeModel 
+            aiplatform.init(project=self.project_id, location=self.region)
+            self.model = GenerativeModel(self.model_name)
+            print(f"Initialized Google Vertex AI client for model: {self.model_name}")
         except ImportError:
-            print("Error: Google Cloud packages are not installed. Please run:")
-            print("pip install --upgrade google-auth google-auth-oauthlib google-auth-httplib2 google-cloud-aiplatform")
+            print("Error: google-cloud-aiplatform package not installed.")
+            print("Please run: pip install google-cloud-aiplatform")
             sys.exit(1)
-
-        # Set up Google Cloud credentials
-        credentials, project = default()
-        if not credentials.valid:
-            if credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
-            else:
-                raise ValueError("Invalid Google Cloud credentials. Please run 'gcloud auth application-default login'")
-
-        # Set up Google Cloud credentials
-        try:
-            credentials, project = default()
-            if not credentials.valid:
-                if credentials.expired and credentials.refresh_token:
-                    credentials.refresh(Request())
-                else:
-                    raise ValueError("Invalid Google Cloud credentials. Please run 'gcloud auth application-default login'")
         except Exception as e:
-            print(f"Error setting up Google Cloud credentials: {str(e)}")
-            print("Please make sure you have run 'gcloud auth application-default login' and have the necessary permissions.")
+            print(f"Error initializing Google Vertex AI client: {e}")
             sys.exit(1)
+            
+    def generate_response(self, prompt: str, max_tokens: int) -> str:
+        self._write_debug_prompt(prompt)
+        print(f"[GoogleVertexLLM] Generating response for model {self.model_name}...")
+        if len(prompt) > GLOBAL_MAX_PROMPT_LENGTH: 
+            prompt = prompt[:GLOBAL_MAX_PROMPT_LENGTH]
+            Global_error = GLOBAL_ERROR_PROMPT_LENGTH
+            print(Global_error)
+        try:
+            # Example for Gemini
+            response = self.model.generate_content(
+                prompt,
+                generation_config={"max_output_tokens": max_tokens} 
+            )
+            # TODO: Check Gemini response structure, might not be .text directly
+            # Example: Accessing parts if it's a multi-part response
+            if hasattr(response, 'parts') and response.parts:
+                 response_text = "".join(part.text for part in response.parts if hasattr(part, 'text'))
+            elif hasattr(response, 'text'):
+                 response_text = response.text
+            else: # Fallback if structure is unknown
+                 response_text = str(response)
+                 print(f"[GoogleVertexLLM] Warning: Unknown response structure: {response}")
 
-        # Replace with your actual Google Cloud project ID and region
-        #project_id = "devlm-435701"
-        project_id = PROJECT_ID
-        region = REGION
-        return VertexAILLM(project_id, region, model)
+            self._write_debug_response(response_text)
+            return response_text
+        except Exception as e:
+            print(f"Error generating response from Google Vertex AI model: {e}")
+            # TODO: Add specific Google API error handling
+            raise LLMError("google_vertex_error", str(e))
+
+    def switch_model(self, new_model: str):
+        self.model_name = new_model
+        # TODO: Re-initialize self.model if needed
+        print(f"Switched GoogleVertexLLM model to: {self.model_name}")
+
+    def _handle_error(self, error_type, error_message):
+        print(f"GoogleVertexLLM error: {error_type} - {error_message}")
+        return False
+# --- END NEW ---
+
+def get_llm_client(provider: str, model: Optional[str] = None, publisher: Optional[str] = None) -> LLMInterface:
+    global API_KEY, PROJECT_ID, REGION, SERVER, PUBLISHER 
+    
+    print(f"[get_llm_client] Provider: {provider}, Model: {model}, Publisher: {publisher}") 
+
+    if provider == "anthropic":
+        if not API_KEY: raise ValueError("Anthropic API key not loaded.")
+        return AnthropicLLM(anthropic.Anthropic(api_key=API_KEY))
+        
+    elif provider == "vertex_ai" or provider == "gcloud": 
+        effective_publisher = publisher or PUBLISHER # Use passed publisher or global default
+        print(f"[get_llm_client] Effective publisher for Vertex: {effective_publisher}")
+        
+        if not PROJECT_ID or not REGION:
+             raise ValueError("PROJECT_ID and REGION must be loaded for Vertex AI.")
+             
+        # --- Instantiate correct class based on publisher --- 
+        if effective_publisher == 'google':
+             print("[get_llm_client] Initializing GoogleVertexLLM...")
+             return GoogleVertexLLM(project_id=PROJECT_ID, region=REGION, model=model)
+        elif effective_publisher == 'anthropic':
+             print("[get_llm_client] Initializing VertexAILLM (for Anthropic on Vertex)...")
+             # Pass model name here, VertexAILLM handles default if None
+             return VertexAILLM(project_id=PROJECT_ID, region=REGION, model=model)
+        else:
+             raise ValueError(f"Unsupported publisher for Vertex AI: {effective_publisher}. Use 'google' or 'anthropic'.")
+            
     elif provider == "openai":
-        import os
-        if not API_KEY:
-            api_key = os.getenv(API_KEY)
-            if not api_key:
-                raise ValueError("OpenAI API key not provided and API_KEY environment variable not set")
-        return OpenAILLM(
-            api_key=API_KEY, 
-            model=model or "gpt-4o",
-            base_url=SERVER
-        )
+        if not API_KEY: raise ValueError("OpenAI API key not loaded.")
+        # Pass model name here, OpenAILLM handles default if None
+        return OpenAILLM(api_key=API_KEY, model=model, base_url=SERVER)
+        
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
@@ -3715,65 +3760,117 @@ def generate():
         print("You can run the script again to continue from where it left off.")
 
 def load_env_variables():
-    env_file = 'devlm.env'
-    if os.path.exists(env_file):
-        with open(env_file, 'r') as f:
-            for line in f:
-                if line.strip() and not line.startswith('#'):
-                    key, value = line.strip().split('=', 1)
-                    print(f"Setting {key} to {value}")
-                    os.environ[key] = value
+    # Prioritize environment variables set by the calling process (like Node.js)
+    global MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, PUBLISHER
     
-    global MODEL, SOURCE, API_KEY, PROJECT_ID, REGION
-    print(f"MODEL: {MODEL}, SOURCE: {SOURCE}, API_KEY: {API_KEY}, PROJECT_ID: {PROJECT_ID}, REGION: {REGION}")
-    if MODEL.lower() == 'claude':
-        if SOURCE.lower() == 'gcloud':
-            if not PROJECT_ID or not REGION:
-                PROJECT_ID = PROJECT_ID or os.environ.get('PROJECT_ID')
-                REGION = REGION or os.environ.get('REGION')
-                if not PROJECT_ID or not REGION:
-                    print("Error: PROJECT_ID and REGION must be provided either as command-line arguments or set in the .env file when using Claude with Google Cloud.")
-                    exit(1)
-            print(f"Using Claude via Google Cloud. Project ID: {PROJECT_ID}, Region: {REGION}")
-        elif SOURCE.lower() == 'anthropic':
-            if not API_KEY:
-                print("API_KEY is not set. Trying to set it from the .env file")
-                API_KEY = API_KEY or os.environ.get('API_KEY')
-                print(f"API_KEY: {API_KEY}")
-            if not API_KEY:
-                print("Error: API_KEY must be provided either as a command-line argument or set in the .env file when using Claude with Anthropic.")
-                exit(1)
-            print("Using Claude via Anthropic API.")
-        else:
-            print(f"Error: Invalid SOURCE '{SOURCE}' for MODEL 'claude'. Must be 'gcloud' or 'anthropic'.")
-            exit(1)
+    print("[DEBUG] Entering load_env_variables...")
+    print(f"[DEBUG] Initial globals - API_KEY: {API_KEY}, PROJECT_ID: {PROJECT_ID}, REGION: {REGION}")
+
+    # --- Get values potentially set by command-line args (already in globals) ---
+    cmd_line_api_key = API_KEY
+    cmd_line_project_id = PROJECT_ID
+    cmd_line_region = REGION
+    cmd_line_publisher = PUBLISHER
+    print(f"[DEBUG] Values from cmd line - API_KEY: {cmd_line_api_key}, PROJECT_ID: {cmd_line_project_id}, REGION: {cmd_line_region}, PUBLISHER: {cmd_line_publisher}")
+
+    # --- Try loading from environment variables SECOND --- 
+    env_api_key = None
+    env_project_id = os.environ.get('PROJECT_ID')
+    env_region = os.environ.get('REGION')
+    env_publisher = os.environ.get('PUBLISHER')
+    
+    # Explicitly check for the keys we expect Node.js to set
+    print("[DEBUG] Checking os.environ for API Keys...")
+    env_openai_key = os.environ.get('OPENAI_API_KEY')
+    env_anthropic_key = os.environ.get('ANTHROPIC_API_KEY')
+    print(f"[DEBUG] Found OPENAI_API_KEY in env: {'Yes (present)' if env_openai_key is not None else 'No'}")
+    print(f"[DEBUG] Found ANTHROPIC_API_KEY in env: {'Yes (present)' if env_anthropic_key is not None else 'No'}")
+
+    if SOURCE.lower() == 'anthropic':
+        env_api_key = env_anthropic_key
+        print(f"[DEBUG] Using ANTHROPIC_API_KEY from env: {env_api_key is not None}")
+    elif SOURCE.lower() == 'openai':
+        env_api_key = env_openai_key
+        print(f"[DEBUG] Using OPENAI_API_KEY from env: {env_api_key is not None}")
+        
+    print(f"[DEBUG] Checked environment - env_api_key_SET: {env_api_key is not None}, env_project_id: {env_project_id}, env_region: {env_region}")
+
+    # --- Load from .env file THIRD (as fallback, only if python-dotenv is installed) ---
+    env_file = 'devlm.env'
+    dotenv_values = {}
+    if os.path.exists(env_file):
+        try:
+            from dotenv import dotenv_values
+            dotenv_values = dotenv_values(dotenv_path=env_file)
+            print(f"[DEBUG] Loaded values from {env_file}: {dotenv_values}")
+        except ImportError:
+            print(f"[DEBUG] python-dotenv not installed, cannot read {env_file}.")
+        except Exception as e:
+             print(f"[DEBUG] Error loading {env_file}: {e}")
     else:
-        # load openai api key from .env file
-        if SOURCE == 'openai':
-            API_KEY = API_KEY or os.environ.get('API_KEY')
-            if not API_KEY:
-                print("Error: OPENAI_API_KEY must be provided either as a command-line argument or set in the .env file when using OpenAI.")
-                exit(1)
-        elif SOURCE.lower() == 'gcloud':
-            if not PROJECT_ID or not REGION:
-                PROJECT_ID = PROJECT_ID or os.environ.get('PROJECT_ID')
-                REGION = REGION or os.environ.get('REGION')
-                if not PROJECT_ID or not REGION:
-                    print("Error: PROJECT_ID and REGION must be provided either as command-line arguments or set in the .env file when using Claude with Google Cloud.")
-                    exit(1)
-            print(f"Using Claude via Google Cloud. Project ID: {PROJECT_ID}, Region: {REGION}")
-        elif SOURCE.lower() == 'anthropic':
-            if not API_KEY:
-                print("API_KEY is not set. Trying to set it from the .env file")
-                API_KEY = API_KEY or os.environ.get('API_KEY')
-                print(f"API_KEY: {API_KEY}")
-            if not API_KEY:
-                print("Error: API_KEY must be provided either as a command-line argument or set in the .env file when using Claude with Anthropic.")
-                exit(1)
-            print("Using Claude via Anthropic API.")
+        print(f"[DEBUG] {env_file} not found, skipping.")
+
+    # --- Determine final values (Command Line > Environment > .env) ---
+    # Prioritize command line, then environment, then .env file
+    final_api_key = cmd_line_api_key or env_api_key or dotenv_values.get('ANTHROPIC_API_KEY' if SOURCE.lower() == 'anthropic' else 'OPENAI_API_KEY')
+    final_project_id = cmd_line_project_id or env_project_id or dotenv_values.get('PROJECT_ID')
+    final_region = cmd_line_region or env_region or dotenv_values.get('REGION')
+    final_publisher = cmd_line_publisher or env_publisher or dotenv_values.get('PUBLISHER') or 'anthropic'
+    
+    print(f"[DEBUG] Determining final values:")
+    print(f"  cmd_line_api_key: {cmd_line_api_key}")
+    print(f"  env_api_key: {env_api_key}")
+    print(f"  dotenv_api_key: {dotenv_values.get('ANTHROPIC_API_KEY' if SOURCE.lower() == 'anthropic' else 'OPENAI_API_KEY')}")
+    print(f"  => final_api_key_SET: {final_api_key is not None}")
+    print(f"  cmd_line_project_id: {cmd_line_project_id}")
+    print(f"  env_project_id: {env_project_id}")
+    print(f"  dotenv_project_id: {dotenv_values.get('PROJECT_ID')}")
+    print(f"  => final_project_id: {final_project_id}")
+    print(f"  cmd_line_region: {cmd_line_region}")
+    print(f"  env_region: {env_region}")
+    print(f"  dotenv_region: {dotenv_values.get('REGION')}")
+    print(f"  => final_region: {final_region}")
+    print(f"  cmd_line_publisher: {cmd_line_publisher}")
+    print(f"  env_publisher: {env_publisher}")
+    print(f"  dotenv_publisher: {dotenv_values.get('PUBLISHER')}")
+    print(f"  => final_publisher: {final_publisher}")
+
+    # Update globals with the final determined values
+    API_KEY = final_api_key
+    PROJECT_ID = final_project_id
+    REGION = final_region
+    PUBLISHER = final_publisher
+
+    # --- Final Validation ---
+    print(f"[DEBUG] Final Validation Check - SOURCE: {SOURCE}")
+    if SOURCE.lower() == 'gcloud':
+        if not PROJECT_ID or not REGION:
+            print("Error: PROJECT_ID and REGION must be provided via command-line, environment, or devlm.env when using source 'gcloud'.")
+            exit(1)
+        print(f"Using Google Cloud Vertex AI. Project ID: {PROJECT_ID}, Region: {REGION}")
+        API_KEY = None # Ensure API_KEY is None for gcloud
+    elif SOURCE.lower() == 'anthropic':
+        if not API_KEY:
+            print("Error: ANTHROPIC_API_KEY must be provided via --api-key, environment, or devlm.env when using source 'anthropic'.")
+            exit(1)
+        print("Using Anthropic API.")
+        PROJECT_ID = None
+        REGION = None
+    elif SOURCE.lower() == 'openai':
+        if not API_KEY:
+            print("Error: OPENAI_API_KEY must be provided via --api-key, environment, or devlm.env when using source 'openai'.")
+            exit(1)
+        print(f"Using OpenAI API. Model: {MODEL}")
+        PROJECT_ID = None
+        REGION = None
+    else:
+        print(f"Error: Invalid SOURCE '{SOURCE}'.") 
+        exit(1)
+
+    print(f"[DEBUG] load_env_variables finished - API_KEY_SET: {API_KEY is not None}, PROJECT_ID: {PROJECT_ID}, REGION: {REGION}")
 
 def main():
-    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client, WRITE_MODE, SERVER, DEBUG_PROMPT, NO_APPROVAL
+    global frontend_testing_enabled, browser, MODEL, SOURCE, API_KEY, PROJECT_ID, REGION, TASK, llm_client, WRITE_MODE, SERVER, DEBUG_PROMPT, NO_APPROVAL, PUBLISHER
 
     parser = argparse.ArgumentParser(description="DevLM Bootstrap script")
     parser.add_argument("--frontend", action="store_true", help="Enable frontend testing")
@@ -3792,18 +3889,21 @@ def main():
         "--source",
         choices=["gcloud", "anthropic", "openai"],
         default="anthropic",
-        help="Specify the source for the model: 'gcloud' or 'anthropic' (default: anthropic)"
+        help="Specify the source for the model: 'gcloud', 'anthropic', or 'openai' (default: anthropic)"
     )
     parser.add_argument(
         "--api-key",
-        help="Specify the API key for Anthropic (only used if source is 'anthropic')"
+        default=None, # Default to None, so we know if it was passed
+        help="Specify the API key (used for Anthropic or OpenAI if not found in env)"
     )
     parser.add_argument(
         "--project-id",
+        default=None, # Default to None
         help="Specify the Google Cloud project ID (only used if source is 'gcloud')"
     )
     parser.add_argument(
         "--region",
+        default=None, # Default to None
         help="Specify the Google Cloud region (only used if source is 'gcloud')"
     )
     parser.add_argument(
@@ -3832,59 +3932,51 @@ def main():
         action="store_true",
         help="Enable debug prompt mode"
     )
-    # Add a flag for not requiring approval for commands
     parser.add_argument(
         "--no-approval",
         action="store_true",
         default=False,
         help="Disable approval for commands"
     )
+    parser.add_argument(
+        "--publisher",
+        default='anthropic', # Default to anthropic
+        help="Specify the publisher for Vertex AI models ('google' or 'anthropic', default: anthropic)"
+    )
     args = parser.parse_args()
 
+    # Set global vars from command line args FIRST
+    # These might be None if not provided, load_env_variables will handle fallback
     MODEL = args.model
     SOURCE = args.source
-    API_KEY = args.api_key
-    PROJECT_ID = args.project_id
-    REGION = args.region
-    SERVER = args.server
+    API_KEY = args.api_key 
+    PROJECT_ID = args.project_id 
+    REGION = args.region 
+    SERVER = args.server # Note: SERVER url doesn't typically come from env, uses default or arg
     PROJECT_PATH = args.project_path
     TASK = args.task
     frontend_testing_enabled = args.frontend
     WRITE_MODE = args.write_mode
     DEBUG_PROMPT = args.debug_prompt
     NO_APPROVAL = args.no_approval
-    # Load environment variables and validate settings
+    PUBLISHER = args.publisher
+    
+    # Load environment variables and validate final settings
     load_env_variables()
 
-    # Check all variables are set based on source and model
+    # Initialize the LLM client AFTER loading env vars and validating
+    # The get_llm_client function will use the final global values
     if SOURCE == 'gcloud':
-        if not PROJECT_ID or not REGION:
-            print("Error: PROJECT_ID and REGION must be provided either as command-line arguments or set in the .env file when using Claude with Google Cloud.")
-            exit(1)
+        # Vertex AI uses Application Default Credentials
+        llm_client = get_llm_client("vertex_ai", model=MODEL, publisher=PUBLISHER)
     elif SOURCE == 'anthropic':
-        if not API_KEY:
-            print("Error: API_KEY must be provided either as a command-line argument or set in the .env file when using Claude with Anthropic.")
-            exit(1)
+        # API_KEY is now guaranteed to be set if validation passed
+        llm_client = get_llm_client("anthropic", model=MODEL)
     elif SOURCE == 'openai':
-        if not API_KEY:
-            print("Error: API_KEY must be provided either as a command-line argument or set in the .env file when using OpenAI.")
-            exit(1)
-        # if SERVER url is provided, check if it is valid, make sure it looks like a valid url
-        if SERVER:
-            if not SERVER.startswith("http://") and not SERVER.startswith("https://"):
-                print(f"Error: Invalid SERVER URL '{SERVER}'. Please check the URL and try again.")
-                exit(1)
-    
-    # Initialize the LLM client based on the source
-    if SOURCE == 'gcloud':
-        llm_client = get_llm_client("vertex_ai")  # or "anthropic" based on your preference
-    elif SOURCE == 'anthropic':
-        llm_client = get_llm_client("anthropic")
-    elif SOURCE == 'openai':
+        # API_KEY is now guaranteed to be set if validation passed
+        # Pass SERVER url (OpenAI Base URL) to the client constructor
         llm_client = get_llm_client("openai", model=MODEL)
-    else:
-        print(f"Error: Invalid SOURCE '{SOURCE}' for MODEL 'claude'. Must be 'gcloud' or 'anthropic'.")
-        exit(1)
+    # No need for final else, load_env_variables exits if SOURCE is invalid
 
     # Change the working directory to the project path
     os.chdir(PROJECT_PATH)
@@ -3938,3 +4030,5 @@ if __name__ == "__main__":
 else:
     # For testing purposes
     __all__ = ['parse_changes', 'apply_changes']
+
+
