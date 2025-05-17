@@ -1602,7 +1602,7 @@ def extract_content(response_text, file_path):
     # File extensions where the LLM might respond with a code block
     code_block_extensions = [
         '.py', '.go', '.js', '.java', '.c', '.cpp', '.h', '.hpp', '.sh',
-        '.html', '.css', '.sql', '.Dockerfile', '.makefile'
+        '.html', '.css', '.sql', '.Dockerfile', '.makefile', '.patch', '.diff' # Added .patch and .diff
     ]
 
     # File extensions for plain text files
@@ -2830,7 +2830,7 @@ You can take the following actions:
 4. Check the output of a running process using "CHECK: <command>"
 5. Inspect up to four files in the project structure by replying with "INSPECT: <file_path>, <file_path>, ..." and get the analysis of the files based on the reason and goals.
 6. Change the working directory to the specified path, use: "CD: <path>".
-7. Read four files and modify one of them by replying with "READ: <file_path1>, <file_path2>, <file_path3>, <file_path4>; MODIFY: <file_path(1,2,3,4)>" 
+7. Read four files and modify one of them by replying with "READ: <file_path1>, <file_path2>, <file_path3>, <file_path4>; WRITE: <file_path(1,2,3,4)>" 
 8. Chat with the user for help or to give feedback by replying with "CHAT: <your question/feedback>". Do this when you see that no progress is being made.
 9. Restart a running process with "RESTART: <command>"
 10. Finish testing by replying with "FINISH"
@@ -2856,7 +2856,7 @@ Once the user task is accomplished, use "CHAT" to ask for feedback, if there is 
 Task: {TASK}
 
 Example 1 of a good response:
-'ACTION: READ: file1.txt, file2.txt; MODIFY: file1.txt
+'ACTION: READ: file1.txt, file2.txt; WRITE: file1.txt
 GOAL: Add a new feature to the project
 REASON: The project needs a new feature to improve the user experience
 <cot>Chain of Thought for this action</cot>'
@@ -2887,7 +2887,7 @@ REASON: The user wants to improve the user experience
         print(f"\nGenerating next step (Iteration {iteration})...")
         # Print the prompt for the user
         # print(final_prompt)
-        response = llm_client.generate_response(final_prompt, 4000)
+        response = llm_client.generate_response(final_prompt, 16000)
         print(f"LLM response:\n{response}")
 
         # Parse the response
@@ -3239,7 +3239,101 @@ Please provide the complete updated content for the file {write_file}, addressin
                     update_test_progress(current_step=f"Inspected multiple files and modified {write_file}")
                     
                     command_entry["result"] = {"changes_summary": changes_summary}
-                else:
+                elif WRITE_MODE == "git_patch":
+                    inspection_prompt += f"""
+Use the contents of the provided files to modify the file {write_file}, consider the previous action, reason and goals for the modification. Use chain of thought to make the modifications.
+
+{"{NEWLINE}Previous action result/analysis: " + previous_action_analysis + "{NEWLINE}" if previous_action_analysis else ""}
+
+Reason for this action: {reason}
+
+Goals for this action: {goals}
+
+Chain of Thought for this action: {cot_match}
+
+You can modify the file by providing a git patch. The patch should be provided as a raw text, without any additional formatting or explanation.
+
+Example of a valid response:
+'diff --git a/file1 b/file1
+index 1234567..89abcdef 100644
+--- a/file1
++++ b/file1
+@@ -1,3 +1,4 @@
+ line1
+ line2
+ line3
++new_line'
+
+Example of an invalid response:
+'diff --git a/file1 b/file1
+index 1234567..89abcdef 100644
+--- a/file1
++++ b/file1
+@@ -1,3 +1,4 @@
+ line1
+ line2
+ line3
++new_line
+
+This is the explanation of the patch, which should not be included in the response.'
+
+Please provide the git patch for the file {write_file}, addressing any issues or improvements needed based on your inspection of all the files, while keeping code CONSISTENT across files, you must not make an unnecessary changes to the code. Never remove features unless specified.
+                    """
+                    patch_text = llm_client.generate_response(inspection_prompt, 16000)
+                    extracted_patch_content = extract_content(patch_text, ".patch")
+                    old_content = read_file(write_file)
+                    try:
+                        apply_git_patch(write_file, extracted_patch_content)
+                        new_content_after_patch = read_file(write_file)
+                        changes_made_diff = ''.join(difflib.unified_diff(old_content.splitlines(keepends=True), new_content_after_patch.splitlines(keepends=True), fromfile=f'{write_file} (before patch)', tofile=f'{write_file} (after patch)'))
+                        changes_prompt = f"""
+                        You are a professional software architect and developer.
+
+                        You inspected multiple files and modified one of them using a git patch. 
+
+                        Reason given for this action: {reason}
+
+                        Goals given for this action: {goals}
+
+                        Chain of Thought for this action: {cot_match}
+
+                        Command history (last 10 commands) for better context: {json.dumps(last_n_iterations, indent=2)}
+
+                        Summarize the changes made to the file {write_file} for future notes to yourself. Compare the original content:
+                        {old_content}
+
+                        With the new content:
+                        {new_content_after_patch}
+
+                        This is for the result section of this command. Provide a brief summary of the modifications and if the goals were achieved in 100 words or less:
+                        """
+                        changes_summary = llm_client.generate_response(changes_prompt, 1000)
+                        print(f"\nModified {write_file} using git patch")
+                        ModifiedFile = True
+                        
+                        # technical_brief = update_technical_brief(write_file, new_content_after_patch, iteration, mode="test", test_info=changes_summary)
+                        update_test_progress(current_step=f"Inspected multiple files and modified {write_file} using git patch")
+                        
+                        command_entry["result"] = {"changes_summary": changes_summary, "patch_applied": True, "patch_diff": changes_made_diff}
+                        
+                        # Check if the patch resulted in no actual change
+                        if old_content == new_content_after_patch:
+                            print("Warning: No actual changes were made in this iteration.")
+                            command_entry["result"]["warning"] = "No actual changes were made in this iteration. Use INSPECT to check what changes are needed."
+
+                            # Add the file to unchanged_files with a counter of 2
+                            unchanged_files[write_file] = 2
+
+                            command_entry["error"] = f"The file {write_file} cannot be modified for the next 2 successful iterations due to no changes in this attempt. Use INSPECT to increase the count."
+                    except Exception as e:
+                        error_msg = f"Failed to apply git patch to {write_file}. Output:\\n{extracted_patch_content[:1000]}..."
+                        print(error_msg)
+                        previous_action_analysis = error_msg
+                        command_entry["error"] = error_msg
+                        command_entry["result"] = {"patch_applied": False, "error_details": error_msg}
+
+                # If change summary has "FILES ARE IDENTICAL", set retry_with_expert to True
+                elif WRITE_MODE == "diff":
                     inspection_prompt += f"""
 Use the contents of the provided files to modify the file {write_file}, consider the previous action, reason and goals for the modification. Use chain of thought to make the modifications.
 {"{NEWLINE}Previous action result/analysis: " + previous_action_analysis + "{NEWLINE}" if previous_action_analysis else ""}
@@ -3920,9 +4014,9 @@ def main():
     )
     parser.add_argument(
         "--write-mode",
-        choices=["direct", "diff"],
-        default="diff",
-        help="Specify the write mode: 'direct' or 'diff' (default: diff)"
+        choices=["direct", "diff", "git_patch"],
+        default="git_patch",
+        help="Specify the write mode: 'direct', 'diff', or 'git_patch' (default: diff)"
     )
     parser.add_argument(
         "--debug-prompt",
